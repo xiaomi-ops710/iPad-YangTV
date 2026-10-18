@@ -20,6 +20,8 @@ const Fol={has:id=>Store.get('fol',[]).some(c=>c.id===id),
   toggle(c){const l=Store.get('fol',[]);Store.set('fol',this.has(c.id)?l.filter(x=>x.id!==c.id):[{id:c.id,name:c.name,avatar:c.avatar,subs:c.subs},...l])}};
 const fmtN=n=>n>=1e8?(n/1e8).toFixed(1)+'億':n>=1e4?(n/1e4).toFixed(n>=1e5?0:1)+'万':String(n);
 const region=()=>Store.get('region','JP');
+const lang=()=>({JP:'ja',US:'en',KR:'ko',GB:'en',TW:'zh-Hant'}[region()]||'en');
+const hash=s=>{let h=5381;for(const c of s)h=(h*33^c.charCodeAt(0))>>>0;return h.toString(36)};
 /* ---------- YouTube Data API ---------- */
 const nch=c=>{const s=c.snippet,t=c.statistics||{};return{id:c.id,name:s.title,handle:s.customUrl||'',avatar:(s.thumbnails.medium||s.thumbnails.default).url,
   banner:c.brandingSettings?.image?.bannerExternalUrl,subs:t.hiddenSubscriberCount?null:+t.subscriberCount,count:+t.videoCount||0,desc:s.description||'',uploads:c.contentDetails.relatedPlaylists.uploads}};
@@ -33,19 +35,33 @@ const API={
     const u=new URL('https://www.googleapis.com/youtube/v3/'+ep);
     Object.entries({...params,key}).forEach(([k,v])=>u.searchParams.set(k,v));
     const ck=u.href;if(this.cache.has(ck))return this.cache.get(ck);
+    /* 検索・人気チャートは端末に数時間キャッシュ（APIの割り当てを節約） */
+    const ttl=ep==='search'?6*36e5:(ep==='videos'&&params.chart)?2*36e5:0,pk=ttl&&'pc.'+hash(ep+JSON.stringify(params));
+    if(ttl){const c=Store.get(pk,null);if(c&&Date.now()-c.t<ttl){this.cache.set(ck,c.v);return c.v}}
     const r=await fetch(u),j=await r.json();
     if(!r.ok)throw new Error(j.error?.message||r.status);
-    this.cache.set(ck,j);return j;
+    this.cache.set(ck,j);if(ttl)this.persist(pk,j);return j;
+  },
+  persist(pk,j){
+    try{
+      const v=JSON.parse(JSON.stringify(j));
+      (v.items||[]).forEach(i=>{if(i.snippet){i.snippet.description=(i.snippet.description||'').slice(0,600);delete i.snippet.localized;delete i.snippet.tags}});
+      Store.set(pk,{t:Date.now(),v});this.prune();
+    }catch{this.prune(true)}
+  },
+  prune(force){
+    const ks=Object.keys(localStorage).filter(k=>k.startsWith('atv.pc.')),lim=force?8:40;
+    if(ks.length>lim)ks.map(k=>{let t=0;try{t=JSON.parse(localStorage[k]).t}catch{}return[k,t]}).sort((a,b)=>a[1]-b[1]).slice(0,ks.length-Math.floor(lim*.7)).forEach(([k])=>localStorage.removeItem(k));
   },
   async videos(p){return(await this.call('videos',{part:'snippet,contentDetails,statistics',regionCode:region(),...p})).items.map(norm)},
-  trending(cat,n=24){return this.videos({chart:'mostPopular',maxResults:n,...(cat?{videoCategoryId:cat}:{})})},
+  trending(cat,n=30){return this.videos({chart:'mostPopular',maxResults:n,...(cat?{videoCategoryId:cat}:{})})},
   async vsearch(p){
-    const s=await this.call('search',{part:'snippet',type:'video',maxResults:24,regionCode:region(),safeSearch:'moderate',...p});
+    const s=await this.call('search',{part:'snippet',type:'video',maxResults:24,regionCode:region(),relevanceLanguage:lang(),safeSearch:'moderate',...p});
     return this.videos({id:s.items.map(i=>i.id.videoId).join(',')});
   },
   search(q){return this.vsearch({q})},
   async chInfo(ids){return(await this.call('channels',{part:'snippet,statistics,contentDetails,brandingSettings',id:ids,maxResults:50})).items.map(nch)},
-  async channels(q){const s=await this.call('search',{part:'snippet',type:'channel',maxResults:20,q});return this.chInfo(s.items.map(i=>i.id.channelId).join(','))},
+  async channels(q){const s=await this.call('search',{part:'snippet',type:'channel',maxResults:20,relevanceLanguage:lang(),q});return this.chInfo(s.items.map(i=>i.id.channelId).join(','))},
   async feed(chs){
     const pls=await Promise.all(chs.map(c=>this.call('playlistItems',{part:'contentDetails',playlistId:'UU'+c.id.slice(2),maxResults:4})
       .then(j=>j.items.map(i=>({id:i.contentDetails.videoId,at:i.contentDetails.videoPublishedAt||''}))).catch(()=>[])));
@@ -104,31 +120,78 @@ function seg(items,cur,cb,cls=''){
     b.scrollIntoView?.({inline:'center',block:'nearest',behavior:'smooth'});cb(b.dataset.k)});
   requestAnimationFrame(()=>mark(el,true));return el;
 }
+/* ---------- 日本語コンテンツの優先 / 視聴傾向にもとづくおすすめ（すべて端末内で計算） ---------- */
+const KW=/[ァ-ヶー]{3,}|[一-龠々]{2,}|[A-Za-z0-9]{3,}/g;
+const isJa=v=>/[\u3040-\u30ff]/.test((v.title||'')+(v.channel||''));
+const Taste={
+  p:null,pt:-1,
+  profile(){
+    const hist=Store.get('hist',[]),wl=Store.get('wl',[]),fol=Store.get('fol',[]),q=Store.get('queue',[]),rec=Store.get('recent',[]);
+    const cat={},ch={},kw={},up=(o,k,w)=>{o[k]=(o[k]||0)+w};
+    const add=(v,w)=>{if(v.cat)up(cat,v.cat,w);if(v.cid)up(ch,v.cid,w);(v.title||'').match(KW)?.forEach(k=>up(kw,k.toLowerCase(),w))};
+    hist.forEach(v=>add(v,1+(v.d?Math.min(1,v.t/v.d):0)*2));          // 最後まで観たものほど重い
+    wl.forEach(v=>add(v,3));q.forEach(v=>add(v,2));fol.forEach(c=>up(ch,c.id,5));
+    rec.forEach(s=>s.match(KW)?.forEach(k=>up(kw,k.toLowerCase(),2)));
+    return{cat,ch,kw,n:hist.length+wl.length+fol.length+q.length};
+  },
+  get(){return this.pt===token&&this.p?this.p:(this.pt=token,this.p=this.profile())},
+  top(o,n){return Object.entries(o).sort((a,b)=>b[1]-a[1]).slice(0,n)},
+  score(v,p){
+    let s=(p.cat[v.cat]||0)*.6+(p.ch[v.cid]||0)*1.2;
+    (v.title||'').match(KW)?.forEach(k=>s+=(p.kw[k.toLowerCase()]||0)*.5);
+    return s;
+  },
+  rows(list){const p=this.get();return Store.get('pers',true)?list.slice().sort((a,b)=>(p.cat[b[1]]||0)-(p.cat[a[1]]||0)):list},
+  async recommend(){
+    if(!Store.get('pers',true))return null;
+    const p=this.profile();if(p.n<2)return null;
+    const chs=this.top(p.ch,6).map(([id])=>({id})),cats=this.top(p.cat,2).map(([c])=>c),kws=this.top(p.kw,3).map(([k])=>k);
+    const[feed,...cv]=await Promise.all([API.feed(chs).catch(()=>[]),...cats.map(c=>API.trending(c,30).catch(()=>[]))]);
+    const kv=kws.length&&Store.get('rks',true)?await API.vsearch({q:kws.join(' ')}).catch(()=>[]):[];
+    const seen=new Set(Store.get('hist',[]).filter(x=>x.d&&x.t>x.d*.85).map(x=>x.id)),pool=new Map();
+    [...feed,...cv.flat(),...kv].forEach(v=>{if(!seen.has(v.id))pool.set(v.id,v)});
+    const ja=Store.get('ja',true);
+    const list=[...pool.values()].map(v=>[v,this.score(v,p)+(ja&&isJa(v)?3:0)+Math.random()*.6]).sort((a,b)=>b[1]-a[1]).slice(0,24).map(x=>x[0]);
+    const names=cats.map(c=>CATS.find(x=>x[0]===c)?.[1]).filter(Boolean).concat(kws.slice(0,2));
+    return{list,why:names.length?`「${names.join('・')}」などの視聴傾向にもとづいています`:''};
+  }
+};
+function arr(items){
+  const pers=Store.get('pers',true),ja=Store.get('ja',true);
+  if(!pers&&!ja)return items;
+  const P=Taste.get();
+  return items.map((v,i)=>[v,(pers?Taste.score(v,P):0)+(ja&&isJa(v)?3:0)-i*.04]).sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+}
 const head=t=>h(`<div class="head"><h1>${esc(t)}</h1></div>`);
 const continueList=()=>Store.get('hist',[]).filter(x=>x.d&&x.t>5&&x.t<x.d*.95);
 
 /* ---------- Views ---------- */
 const main=$('#main'),state={view:'home',cat:'all',stack:[]};let token=0,sub=0;
-const CATS=[['all','すべて'],['10','ミュージック'],['20','ゲーム'],['24','エンタメ'],['17','スポーツ'],['23','コメディ'],['25','ニュース'],['28','サイエンス']];
-const ROWS=[['ミュージック',10],['ゲーム',20],['エンタメ',24],['スポーツ',17],['ニュース',25]];
+const TITLES={home:'ホーム',hot:'話題',live:'ライブ',subs:'登録',lib:'ライブラリ',search:'検索'};
+function setTitle(v,arg){$('#ptitle').textContent=(v==='lib'&&arg)||v==='channel'?'':(TITLES[v]||'');document.body.dataset.view=v}
+const CATS=[['all','すべて'],['live','ライブ'],['10','ミュージック'],['20','ゲーム'],['24','エンタメ'],['17','スポーツ'],['23','コメディ'],['25','ニュース'],['28','サイエンス']];
+const ROWS=[['ミュージック',10],['ゲーム',20],['エンタメ',24],['スポーツ',17],['ニュース',25],['アニメ・映画',1],['人物・ブログ',22],['コメディ',23],['教育',27],['ハウツー・スタイル',26],['ペット',15],['旅行',19],['サイエンス・テクノロジー',28],['自動車',2]];
 const VIEWS={
   async home(my){
     const body=h('<div class="catbody"></div>');
     const fill=async()=>{
       const c=state.cat,t=++sub;clearInterval(heroTimer);body.replaceChildren();
       try{
-        const hot=await API.trending(c==='all'?null:c,24);if(my!==token||t!==sub)return;
-        hot.forEach(reg);body.append(hero(hot.slice(0,6)));
+        const hot=c==='live'?await API.vsearch({eventType:'live',order:'viewCount'}):await API.trending(c==='all'?null:c,24);if(my!==token||t!==sub)return;
+        const hs=arr(hot);hot.forEach(reg);body.append(hero(hs.slice(0,6)));
         const rows=h('<div class="rows"></div>');body.append(rows);
         if(c==='all'){
           const hist=continueList(),wl=Store.get('wl',[]),fol=Store.get('fol',[]);
           if(hist.length)rows.append(row('続きを観る',hist,{progress:1}));
+          const rslot=h('<div></div>');rows.append(rslot);
+          Taste.recommend().then(r=>{if(!r||!r.list.length||my!==token||t!==sub)return;const rr=row('あなたへのおすすめ',r.list);
+            if(r.why)$('h2',rr).after(h(`<p class="rsub">${esc(r.why)}</p>`));rslot.append(rr)}).catch(()=>{});
           if(wl.length)rows.append(row('次に観る',wl));
           if(fol.length)rows.append(chRow('フォロー中のチャンネル',fol));
         }
-        rows.append(row(c==='all'?'トップ10：話題':'トップ10：'+CATS.find(x=>x[0]===c)[1],hot.slice(0,10),{rank:1}),row('話題の動画',hot.slice(10)));
-        if(c==='all')ROWS.forEach(([n,k])=>{const slot=h('<div></div>');rows.append(slot);
-          API.trending(k).then(v=>{if(my===token&&t===sub)slot.append(row(n,v))}).catch(()=>{})});
+        rows.append(row(c==='all'?'トップ10：話題':'トップ10：'+CATS.find(x=>x[0]===c)[1],hot.slice(0,10),{rank:1}),row('話題の動画',hs.slice(6)));
+        if(c==='all')Taste.rows(ROWS).forEach(([n,k])=>{const slot=h('<div></div>');rows.append(slot);
+          API.trending(k).then(v=>{if(my===token&&t===sub)slot.append(row(n,arr(v)))}).catch(()=>{})});
       }catch(e){if(my===token&&t===sub)body.append(notice('読み込めませんでした',e.message,'APIキーを確認'))}
     };
     main.append(seg(CATS,state.cat,k=>{state.cat=k;fill()},'cats'),body);
@@ -147,10 +210,21 @@ const VIEWS={
     const v=await API.feed(fol.slice(0,15));if(my!==token)return;
     slot.replaceWith(h('<div class="head sub"><h1>新着</h1></div>'),grid(v,{}));
   },
-  async hot(my){const v=await API.trending(null,50);if(my!==token)return;main.append(head('話題の動画'),grid(v,{}))},
-  async lib(my){
+  async hot(my){const v=await API.trending(null,50);if(my!==token)return;main.append(head('話題の動画'),grid(arr(v),{}))},
+  async lib(my,arg){
+    const wl=Store.get('wl',[]),hist=Store.get('hist',[]),fol=Store.get('fol',[]),q=Store.get('queue',[]);
+    const data={wl:['ウォッチリスト',wl,'bookmark'],hist:['視聴履歴',hist,'clock'],fol:['フォロー中のチャンネル',fol,'people'],queue:['キュー',q,'queue']};
+    if(arg&&data[arg]){
+      const[t,l]=data[arg];
+      main.append(h(`<div class="shd"><button class="back glass" data-act="back" aria-label="戻る">${icon('chev')}</button><h1>${t}</h1></div>`));
+      if(!l.length)return main.append(h('<p class="msg">まだ何もありません。</p>'));
+      if(arg==='fol'){const g=h('<div class="grid chg"></div>');l.forEach(c=>CH.set(c.id,c));g.append(...l.map(chCard));return main.append(g)}
+      return main.append(grid(l,arg==='hist'?{progress:1}:{}));
+    }
+    if(phone()){   // iPhone: アイコン付きのリスト + シェブロン
+      return main.append(h(`<div class="plist">${Object.entries(data).map(([k,[t,l,ic]])=>`<button class="pl" data-lib="${k}">${icon(ic)}<span>${t}</span><em>${l.length||''}</em>${chv}</button>`).join('')}</div>`));
+    }
     main.append(head('ライブラリ'));
-    const wl=Store.get('wl',[]),hist=Store.get('hist',[]),fol=Store.get('fol',[]);
     if(!wl.length&&!hist.length&&!fol.length)return main.append(h('<p class="msg">フォローしたチャンネル、ウォッチリスト、視聴履歴がここに表示されます。</p>'));
     const body=h('<div class="rows"></div>');main.append(body);
     if(fol.length)body.append(chRow('フォロー中のチャンネル',fol));
@@ -160,11 +234,13 @@ const VIEWS={
   async search(){
     main.append(head('検索'));
     let mode='v';
-    const f=h(`<form class="sbar glass">${icon('search')}<input type="search" placeholder="動画・チャンネルを検索" enterkeyhint="search" autofocus></form>`),
-      res=h('<div></div>'),inp=$('input',f),rec=h('<div class="chips"></div>');
+    const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+    const f=h(`<form class="sbar glass">${icon('search')}<input type="search" placeholder="動画・チャンネルを検索" enterkeyhint="search">${SR?`<button type="button" class="mic" aria-label="音声検索">${icon('mic')}</button>`:''}</form>`),
+      res=h('<div></div>'),inp=$('input',f),rec=h('<div class="chips"></div>'),tiles=h('<div class="tiles"></div>');
     const drawRec=()=>{rec.innerHTML=Store.get('recent',[]).map(q=>`<button data-q="${esc(q)}">${esc(q)}</button>`).join('')};
     const run=async()=>{
       const q=inp.value.trim();if(!q)return;
+      tiles.hidden=true;
       Store.set('recent',[q,...Store.get('recent',[]).filter(x=>x!==q)].slice(0,8));drawRec();
       res.replaceChildren(h('<p class="msg">検索中…</p>'));
       try{
@@ -174,10 +250,33 @@ const VIEWS={
         else{const cs=await API.channels(q),g=h('<div class="grid chg"></div>');cs.forEach(c=>CH.set(c.id,c));g.append(...cs.map(chCard));res.replaceChildren(g)}
       }catch(err){res.replaceChildren(h(`<p class="msg">${esc(err.message)}</p>`))}
     };
+    /* カテゴリタイル（iPhoneのApple TVアプリの検索画面風） */
+    const CT=[['10','ミュージック','#ff5f6d','#ffc371'],['20','ゲーム','#5b7cfa','#8be9fd'],['24','エンタメ','#c471ed','#f64f59'],['17','スポーツ','#11998e','#38ef7d'],
+      ['23','コメディ','#f7971e','#ffd200'],['25','ニュース','#314755','#26a0da'],['28','サイエンス','#4e54c8','#8f94fb'],['live','ライブ','#cb2d3e','#ef473a'],
+      ['1','映画・アニメ','#7b4397','#dc2430'],['2','自動車','#434343','#9a9a9a'],['15','ペット','#f2994a','#f2c94c'],['19','旅行','#00b4db','#0083b0'],
+      ['26','ハウツー','#56ab2f','#a8e063'],['27','教育','#396afc','#2948ff'],['22','人物・ブログ','#ee0979','#ff6a00']];
+    tiles.append(...CT.map(([id,t,a,b])=>{
+      const el=h(`<button class="tile" type="button" style="--g:linear-gradient(160deg,${a},${b})"><b>${t}</b></button>`);
+      el.addEventListener('click',async()=>{
+        tiles.hidden=true;rec.hidden=true;res.replaceChildren(h('<p class="msg">読み込み中…</p>'));
+        try{
+          const v=id==='live'?await API.vsearch({eventType:'live',order:'viewCount'}):await API.trending(id,30);
+          const back=h(`<button type="button" class="chips-b">‹ すべてのカテゴリ</button>`);
+          back.onclick=()=>{res.replaceChildren();tiles.hidden=false;rec.hidden=false};
+          res.replaceChildren(back,h(`<div class="head sub"><h1>${t}</h1></div>`),grid(v,{}));
+        }catch(err){res.replaceChildren(h(`<p class="msg">${esc(err.message)}</p>`))}
+      });
+      return el;
+    }));
     const tabs=seg([['v','動画'],['c','チャンネル']],'v',k=>{mode=k;if(inp.value.trim())run()},'smode');
     f.addEventListener('submit',e=>{e.preventDefault();run()});
+    inp.addEventListener('input',()=>{if(!inp.value){res.replaceChildren();tiles.hidden=false;rec.hidden=false}});
     rec.addEventListener('click',e=>{const b=e.target.closest('[data-q]');if(b){inp.value=b.dataset.q;run()}});
-    drawRec();main.append(f,tabs,rec,res);
+    const mic=$('.mic',f);
+    if(mic)mic.addEventListener('click',()=>{const r=new SR();r.lang='ja-JP';r.interimResults=false;mic.classList.add('on');
+      r.onresult=e=>{inp.value=e.results[0][0].transcript;run()};r.onend=()=>mic.classList.remove('on');try{r.start()}catch{}});
+    drawRec();main.append(f,tabs,rec,tiles,res);
+    if(!phone())inp.focus();
   },
   async channel(my,id){
     const c=(await API.chInfo(id))[0];if(my!==token)return;if(!c)throw new Error('チャンネルが見つかりません');
@@ -200,7 +299,7 @@ const notice=(t,p,btn)=>h(`<div class="empty"><h1>${t}</h1><p>${esc(p)}</p>${btn
 async function render(view,arg,back){
   const my=++token;
   if(!back&&state.ready&&(view!==state.view||arg!==state.arg))state.stack=[...state.stack,[state.view,state.arg]].slice(-20);
-  state.ready=1;state.view=view;state.arg=arg;markNav(view);closeSide();clearInterval(heroTimer);scrollTo(0,0);main.replaceChildren();
+  state.ready=1;state.view=view;state.arg=arg;markNav(view);setTitle(view,arg);closeSide();clearInterval(heroTimer);scrollTo(0,0);main.replaceChildren();
   if(!Store.get('key',''))return main.append(notice('APIキーを設定','YouTube Data API v3 のキーを登録すると、動画を表示できます。','設定を開く'));
   try{await VIEWS[view](my,arg)}catch(e){if(my===token)main.append(notice('読み込めませんでした',e.message,'APIキーを確認'))}
 }
@@ -210,7 +309,7 @@ function markNav(v){
   $$('[data-view]').forEach(b=>b.dataset.view===v?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current'));
   mark($('#nav'));
 }
-const wide=()=>matchMedia('(min-width:900px)').matches;
+const wide=()=>matchMedia('(min-width:900px)').matches,phone=()=>matchMedia('(max-width:700px)').matches;
 function applyLayout(){document.body.dataset.layout=wide()&&Store.get('layout','tab')==='side'?'side':'tab';requestAnimationFrame(()=>markNav(state.view))}
 const closeSide=()=>{$('#side').classList.remove('open');$('#scrim').classList.remove('on')};
 const toggleSide=()=>{$('#side').classList.toggle('open');$('#scrim').classList.toggle('on')};
@@ -289,8 +388,8 @@ const Player={
     if(this.v!==v)return;
     const seen=new Set([v.id]),list=[];
     for(let i=0;i<Math.max(a.length,b.length);i++)for(const x of [a[i],b[i]])if(x&&!seen.has(x.id)){seen.add(x.id);list.push(x)}
-    this.recs=list;
-    $('.rd',box).append(...list.map(x=>{const c=card(reg(x),0);c.classList.add('rl');return c}));
+    const L=arr(list);this.recs=L;
+    $('.rd',box).append(...L.map(x=>{const c=card(reg(x),0);c.classList.add('rl');return c}));
   },
   async comments(v){
     if(!Store.get('cm',true))return;
@@ -356,9 +455,10 @@ const det=$('#detail');
 const slim=v=>({id:v.id,title:v.title,channel:v.channel,cid:v.cid,cat:v.cat,thumb:v.thumb,hi:v.hi,dur:v.dur});
 function toast(t){const e=h(`<div class="toast glass">${esc(t)}</div>`);document.body.append(e);setTimeout(()=>e.classList.add('out'),1700);setTimeout(()=>e.remove(),2200)}
 document.addEventListener('click',e=>{
-  const a=e.target.closest('[data-act],[data-view],[data-ch],.card');if(!a)return;
+  const a=e.target.closest('[data-act],[data-view],[data-ch],[data-lib],.card');if(!a)return;
   if(det.open&&(a.dataset.ch||a.dataset.act==='play'))det.close();
   if(a.dataset.view)return render(a.dataset.view);
+  if(a.dataset.lib)return render('lib',a.dataset.lib);
   if(a.dataset.ch){if(Player.v&&!Player.isMini)Player.mini();return render('channel',a.dataset.ch)}
   if(a.matches('.card'))return Player.open(VID.get(a.dataset.id));
   const v=VID.get(a.dataset.id);
@@ -468,7 +568,7 @@ const LG={
   },
   scan(){
     if(!this.defs)return;
-    $$('.nav,.seg,.side,.sbar,.btn-add,.x,.knob,.pv,.sl-wide,.back').forEach(e=>this.attach(e));
+    $$('.nav,.seg,.side,.sbar,.btn-add,.x,.knob,.pv,.sl-wide,.back,#avatar').forEach(e=>this.attach(e));
     this.panels=this.panels.filter(p=>{if(p.el.isConnected)return true;p.ro.disconnect();this.drop(p.id);return false});
   }
 };
@@ -480,6 +580,7 @@ const SWS={
 };
 SWS.bold={get:()=>Store.get('bold',false),set:v=>{Store.set('bold',v);applyPrefs()}};
 SWS.rm={get:()=>Store.get('rm',false),set:v=>{Store.set('rm',v);applyPrefs()}};
+for(const[k,d]of[['ja',true],['pers',true],['rks',true]])SWS[k]={get:()=>Store.get(k,d),set:v=>{Store.set(k,v);Settings.dirty=true}};
 const syncSw=()=>$$('[data-sw]').forEach(b=>b.setAttribute('aria-checked',SWS[b.dataset.sw].get()));
 document.addEventListener('click',e=>{const b=e.target.closest('[data-sw]');if(!b)return;const s=SWS[b.dataset.sw];s.set(!s.get());syncSw()});
 function initSl(el){
@@ -520,6 +621,9 @@ const SET={
     <p class="hd">再生</p>
     <div class="grp"><div class="rw"><span>自動再生</span>${swt('auto')}</div><div class="rw"><span>コメントを表示</span>${swt('cm')}</div></div>
     <p class="ft">自動再生をオンにすると、動画の終了後にキュー、またはおすすめの動画へ進みます。</p>
+    <p class="hd">おすすめ</p>
+    <div class="grp"><div class="rw"><span>日本のコンテンツを優先</span>${swt('ja')}</div><div class="rw"><span>視聴履歴からおすすめ</span>${swt('pers')}</div><div class="rw"><span>検索を使ったおすすめ</span>${swt('rks')}</div></div>
+    <p class="ft">視聴履歴、ウォッチリスト、フォロー、検索履歴は、この端末の中だけで使われ、外部には送られません。検索を使ったおすすめは、YouTube APIの割り当てを多く消費します（結果は数時間キャッシュされます）。</p>
     <p class="hd">アクセシビリティオプション</p>
     <div class="grp"><div class="rw"><span>文字を太くする</span>${swt('bold')}</div><div class="rw"><span>視差効果を減らす</span>${swt('rm')}</div></div>
     <p class="ft">視差効果を減らすと、画面の動きやアニメーションが最小限になります。</p>
@@ -617,7 +721,7 @@ const Lens=(()=>{
     const lens=h(`<div class="lens" aria-hidden="true"><div class="lr"${L.id?` style="filter:url(#${L.id})"`:''}><div class="lc">${html}</div></div>${L.spec?`<div class="lspec" style="background-image:url(${L.spec})"></div>`:''}</div>`);
     lens.style.setProperty('--lw',S.base+'px');
     lens.style.setProperty('--bw',bar.scrollWidth+'px');lens.style.setProperty('--bh',bar.clientHeight+'px');
-    const ls=lens.style;ls.setProperty('--bx',r.left+'px');ls.setProperty('--by',r.top+'px');ls.setProperty('--bsl',bar.scrollLeft+'px');
+    lens.classList.add(bar.matches('.nav')?'ln':'ls');const ls=lens.style;ls.setProperty('--bx',r.left+'px');ls.setProperty('--by',r.top+'px');ls.setProperty('--bsl',bar.scrollLeft+'px');
     ls.setProperty('--bleed',bleed+'px');ls.setProperty('--lh',(bar.clientHeight+2*bleed)+'px');
     if(L.bid)ls.backdropFilter=ls.webkitBackdropFilter=`blur(1px) url(#${L.bid}) saturate(1.7) brightness(1.2)`;
     bar.style.setProperty('--lw',S.base+'px');[...bar.children].forEach(c=>c.tagName==='BUTTON'&&c.style.setProperty('--bl',c.offsetLeft+'px'));
@@ -664,6 +768,7 @@ const Lens=(()=>{
   document.addEventListener('contextmenu',e=>{if(e.target.closest?.('.nav,.seg'))e.preventDefault()});
 })();
 matchMedia('(min-width:900px)').addEventListener('change',applyLayout);
+matchMedia('(max-width:700px)').addEventListener('change',()=>{applyLayout();render(state.view,state.arg,true)});
 document.documentElement.style.setProperty('--accent',Store.get('accent','#41a0ff'));
 applyPrefs();LG.start();applyLayout();sideCh();render('home');
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));

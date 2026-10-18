@@ -44,18 +44,23 @@
  <symbol id="i-menu" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 7h16M7 12h10M10 17h4"/></symbol>
   <symbol id="i-clear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="3.5" width="12.5" height="12.5" rx="3.5"/><rect x="8.5" y="8.5" width="12.5" height="12.5" rx="3.5"/></g></symbol>
   <symbol id="i-tint" viewBox="0 0 24 24"><rect x="3" y="3.5" width="12.5" height="12.5" rx="3.5" fill="currentColor" opacity=".55"/><rect x="8.5" y="8.5" width="12.5" height="12.5" rx="3.5" fill="currentColor"/></symbol>
+ <symbol id="i-person" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.5 20.500c.6-4.2 3.6-6.5 7.5-6.500s6.9 2.3 7.5 6.500z"/></g></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.500a6.5 6.5 0 0 0 13 0M12 18v3"/></g></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M7 4h10a1.5 1.5 0 0 1 1.5 1.500V21L12 16.5 5.5 21V5.500A1.5 1.5 0 0 1 7 4z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.8"/><path d="M12 7v5.200l3.2 2"/></g></symbol>
+  <symbol id="i-people" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="9" cy="8" r="3.2"/><path d="M3 19.500a6 6 0 0 1 12 0"/><circle cx="17" cy="9" r="2.5"/><path d="M16.5 14.200a5 5 0 0 1 5 5.3"/></g></symbol>
  </defs>
 </svg>
 
 <nav class="nav glass" id="nav" aria-label="メイン">
  <span class="ind"></span>
  <button data-act="layout" aria-label="サイドバーを表示"><svg class="ic"><use href="#i-sidebar"/></svg></button>
- <button data-view="home">ホーム</button>
- <button data-view="hot">話題</button>
- <button data-view="live">ライブ</button>
- <button data-view="subs">登録</button>
- <button data-view="lib">ライブラリ</button>
- <button data-view="search" aria-label="検索"><svg class="ic"><use href="#i-search"/></svg></button>
+ <button data-view="home"><svg class="ic ti"><use href="#i-home"/></svg><span class="tl">ホーム</span></button>
+ <button data-view="hot"><svg class="ic ti"><use href="#i-flame"/></svg><span class="tl">話題</span></button>
+ <button data-view="live"><svg class="ic ti"><use href="#i-live"/></svg><span class="tl">ライブ</span></button>
+ <button data-view="subs"><svg class="ic ti"><use href="#i-subs"/></svg><span class="tl">登録</span></button>
+ <button data-view="lib"><svg class="ic ti"><use href="#i-library"/></svg><span class="tl">ライブラリ</span></button>
+ <button data-view="search" aria-label="検索"><svg class="ic ti"><use href="#i-search"/></svg><span class="tl">検索</span></button>
 </nav>
 
 <div class="scrim" id="scrim" data-act="side"></div>
@@ -72,6 +77,8 @@
  <button data-act="setup"><svg class="ic"><use href="#i-gear"/></svg>設定</button>
 </aside>
 
+<h1 id="ptitle"></h1>
+<button id="avatar" class="glass" data-act="setup" aria-label="設定"><svg class="ic"><use href="#i-person"/></svg></button>
 <main id="main"></main>
 
 <section id="player" aria-label="プレーヤー">
