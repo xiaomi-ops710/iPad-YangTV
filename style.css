@@ -233,3 +233,55 @@ body.lock{overflow:hidden}
 .lw.a .lc{transform:scale(1.16)}
 .lw.b{-webkit-mask-image:radial-gradient(closest-side,transparent 50%,#000 97%);mask-image:radial-gradient(closest-side,transparent 50%,#000 97%)}
 .lw.b .lc{transform:scale(1.8);text-shadow:-1.5px 0 rgba(255,80,80,.75),1.5px 0 rgba(70,140,255,.85)}
+
+/* ===== v5: 本家サイズのタブ / 半透明レンズ / モーション ===== */
+:root{--accent:#41a0ff;--top:calc(env(safe-area-inset-top,0px) + 76px);--barh:60px}
+body[data-layout=side]{--top:calc(env(safe-area-inset-top,0px) + 16px)}
+.nav,.seg{padding:6px}
+.nav button,.seg button{padding:11px 24px;font-size:17px;font-weight:600;color:rgba(255,255,255,.96)}
+.nav [aria-current],.seg [aria-current]{color:var(--accent)}
+.nav .ic{width:1.5em;height:1.5em}
+.lc{padding:6px}
+.ind{top:6px;bottom:6px}
+.cats{margin:var(--top) auto calc(-1*(var(--top) + var(--barh)))}
+@media (max-width:700px){
+ .nav button{padding:10px 13px;font-size:15px}
+ .nav [data-view=live],.nav [data-view=subs]{display:none}
+}
+/* ガラスのレンズ：半透明・明るい面・屈折する縁 */
+.lens{background:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,.07) 55%,rgba(255,255,255,.15));
+ -webkit-backdrop-filter:blur(9px) saturate(1.7) brightness(1.25);backdrop-filter:blur(9px) saturate(1.7) brightness(1.25);
+ box-shadow:0 0 0 1px rgba(0,0,0,.55),0 18px 38px rgba(0,0,0,.5);
+ transition:opacity .3s,scale .55s var(--spring2)}
+.lens::before{content:"";position:absolute;inset:0;z-index:2;border-radius:inherit;pointer-events:none;
+ background:radial-gradient(120% 90% at 28% 0%,rgba(255,255,255,.3),transparent 58%)}
+.lens::after{box-shadow:inset 0 0 0 1px rgba(255,255,255,.28),inset 3px 3px 6px -2px rgba(130,205,255,.9),inset -3px -3px 6px -2px rgba(255,165,90,.8),inset 0 0 22px rgba(255,255,255,.14)}
+.lens-on .lens{scale:1.02}
+/* 暗い楕円の動き：滑る→ぷるん／ガラスから戻る→収縮して落ち着く */
+@keyframes jelly{0%{scale:1.16 .84}40%{scale:.94 1.1}70%{scale:1.03 .98}100%{scale:1}}
+.ind.jelly{animation:jelly .6s var(--ease)}
+@keyframes settle{0%{scale:1.2 1.4;opacity:0}30%{opacity:1}60%{scale:.95 .93}100%{scale:1}}
+.ind.settle{animation:settle .65s cubic-bezier(.3,1.5,.5,1)}
+/* 全体のモーション */
+@keyframes vin{from{opacity:0;translate:0 16px}}
+main>*{animation:vin .6s var(--ease) backwards}
+@keyframes heroin{from{opacity:0;translate:0 26px}}
+.slide.on .hero-body>*{animation:heroin .9s var(--ease) backwards}
+.slide.on .hero-body>*:nth-child(2){animation-delay:.08s}.slide.on .hero-body>*:nth-child(3){animation-delay:.16s}.slide.on .hero-body>*:nth-child(4){animation-delay:.24s}
+.row{transition:opacity .8s var(--ease),translate .8s var(--ease)}
+.row.pre{opacity:0;translate:0 30px}
+.thumb img{opacity:0;transition:opacity .6s,scale .6s var(--ease);scale:1.04}
+.thumb img.in{opacity:1;scale:1}
+.card:hover .thumb img{scale:1.05}
+@keyframes rise{from{opacity:0;translate:0 22px}}
+.grid .card{animation:rise .6s var(--ease) backwards;animation-delay:calc(var(--i,0)*50ms)}
+.chc,.chips button,.wact button,.btn-sub{transition:scale .35s var(--spring)}
+.chc:active,.chips button:active,.wact button:active,.btn-sub:active{scale:.93}
+.sheet[open]{animation:sheetin .55s var(--spring2)}
+@keyframes sheetin{from{opacity:0;scale:.88;translate:0 24px}}
+.side.open button{animation:vin .5s var(--ease) backwards}
+.side.open button:nth-child(3){animation-delay:.05s}.side.open button:nth-child(4){animation-delay:.1s}.side.open button:nth-child(5){animation-delay:.15s}.side.open button:nth-child(6){animation-delay:.2s}
+.head.sub{padding-top:28px}
+.toast{position:fixed;z-index:200;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 26px);translate:-50% 0;padding:12px 22px;border-radius:999px;font-weight:600;font-size:15px;animation:toastin .5s var(--spring2)}
+.toast.out{opacity:0;translate:-50% 14px;transition:.45s var(--ease)}
+@keyframes toastin{from{opacity:0;translate:-50% 24px;scale:.9}}

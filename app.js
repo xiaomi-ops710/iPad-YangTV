@@ -46,6 +46,14 @@ const API={
   search(q){return this.vsearch({q})},
   async chInfo(ids){return(await this.call('channels',{part:'snippet,statistics,contentDetails,brandingSettings',id:ids,maxResults:50})).items.map(nch)},
   async channels(q){const s=await this.call('search',{part:'snippet',type:'channel',maxResults:20,q});return this.chInfo(s.items.map(i=>i.id.channelId).join(','))},
+  async feed(chs){
+    const pls=await Promise.all(chs.map(c=>this.call('playlistItems',{part:'contentDetails',playlistId:'UU'+c.id.slice(2),maxResults:4})
+      .then(j=>j.items.map(i=>({id:i.contentDetails.videoId,at:i.contentDetails.videoPublishedAt||''}))).catch(()=>[])));
+    const items=pls.flat().sort((a,b)=>b.at.localeCompare(a.at)).slice(0,48);
+    if(!items.length)return[];
+    const m=new Map((await this.videos({id:items.map(i=>i.id).join(','),maxResults:50})).map(v=>[v.id,v]));
+    return items.map(i=>m.get(i.id)).filter(Boolean);
+  },
   async uploads(pl,n){const j=await this.call('playlistItems',{part:'contentDetails',playlistId:pl,maxResults:n});return this.videos({id:j.items.map(i=>i.contentDetails.videoId).join(',')})}
 };
 
@@ -65,25 +73,30 @@ function hero(list){
   const set=n=>{i=(n+list.length)%list.length;$$('.slide',el).forEach((s,k)=>s.classList.toggle('on',k===i));$$('i',dots).forEach((d,k)=>d.classList.toggle('on',k===i))};
   set(0);clearInterval(heroTimer);heroTimer=setInterval(()=>set(i+1),7000);
   dots.addEventListener('click',e=>{const d=e.target.closest('[data-dot]');if(d){set(+d.dataset.dot);clearInterval(heroTimer)}});
+  let sx=null;el.addEventListener('pointerdown',e=>{sx=e.clientX});
+  el.addEventListener('pointerup',e=>{if(sx==null)return;const d=e.clientX-sx;sx=null;if(Math.abs(d)>50){set(i+(d<0?1:-1));clearInterval(heroTimer)}});
   return el;
 }
 function card(v,i,o={}){
   const p=o.progress&&v.d?Math.min(1,v.t/v.d):0;
-  return h(`<article class="card" tabindex="0" data-id="${v.id}"><div class="thumb"><img loading="lazy" alt="" src="${v.thumb}"><button class="more glass" data-act="info" data-id="${v.id}" aria-label="詳細">${icon('more')}</button>
+  return h(`<article class="card" tabindex="0" data-id="${v.id}" style="--i:${Math.min(i,10)}"><div class="thumb"><img loading="lazy" alt="" src="${v.thumb}" onload="this.classList.add('in')"><button class="more glass" data-act="info" data-id="${v.id}" aria-label="詳細">${icon('more')}</button>
     ${o.rank?`<span class="rank">${i+1}</span>`:''}
     ${p?`<span class="bar" style="--p:${p*100}%"><i></i></span>`:`<span class="dur">${fmt(v.dur)}</span>`}</div>
     <div class="meta"><b>${esc(v.title)}</b><span${v.cid?` data-ch="${v.cid}"`:''}>${esc(v.channel)}${p?` · 残り${Math.ceil((v.d-v.t)/60)}分`:''}</span></div></article>`);
 }
+const IO=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.remove('pre');IO.unobserve(e.target)}}),{rootMargin:'0px 0px -6% 0px'});
 function row(title,items,o={}){
   const s=h(`<section class="row"><h2>${esc(title)}${icon('chev')}</h2><div class="rail"></div></section>`);
-  $('.rail',s).append(...items.map((v,i)=>card(reg(v),i,o)));return s;
+  $('.rail',s).append(...items.map((v,i)=>card(reg(v),i,o)));s.classList.add('pre');IO.observe(s);return s;
 }
 const grid=(items,o)=>{const g=h('<div class="grid"></div>');g.append(...items.map((v,i)=>card(reg(v),i,o)));return g};
 const chCard=c=>h(`<button class="chc" data-ch="${c.id}"><img src="${c.avatar}" alt=""><b>${esc(c.name)}</b>${c.subs!=null?`<span>登録者 ${fmtN(c.subs)}人</span>`:''}</button>`);
 const chRow=(t,l)=>{const s=h(`<section class="row"><h2>${esc(t)}${icon('chev')}</h2><div class="rail chr"></div></section>`);$('.rail',s).append(...l.map(chCard));return s};
 /* Liquid Glass セグメント（レンズ型インジケータ） */
 const mark=(el,now)=>{const b=$('[aria-current]',el),i=$('.ind',el);if(!b||!i)return;
-  if(now)i.style.transition='none';i.style.left=b.offsetLeft+'px';i.style.width=b.offsetWidth+'px';if(now){i.offsetWidth;i.style.transition=''}};
+  const L=b.offsetLeft+'px',moved=!now&&i.style.left&&i.style.left!==L;
+  if(now)i.style.transition='none';i.style.left=L;i.style.width=b.offsetWidth+'px';if(now){i.offsetWidth;i.style.transition=''}
+  if(moved){i.classList.remove('jelly');void i.offsetWidth;i.classList.add('jelly')}};
 function seg(items,cur,cb,cls=''){
   const el=h(`<div class="seg glass ${cls}"><span class="ind"></span>${items.map(([k,t])=>`<button data-k="${k}"${k===cur?' aria-current="true"':''}>${esc(t)}</button>`).join('')}</div>`);
   el.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
@@ -120,6 +133,19 @@ const VIEWS={
     };
     main.append(seg(CATS,state.cat,k=>{state.cat=k;fill()},'cats'),body);
     await fill();
+  },
+  async live(my){
+    const v=await API.vsearch({eventType:'live',order:'viewCount'});if(my!==token)return;
+    main.append(head('ライブ'),v.length?grid(v,{}):h('<p class="msg">現在ライブ配信は見つかりませんでした。</p>'));
+  },
+  async subs(my){
+    main.append(head('登録チャンネル'));
+    const fol=Store.get('fol',[]);
+    if(!fol.length)return main.append(h('<p class="msg">チャンネルをフォローすると、最新の動画がここにまとまります。検索の「チャンネル」から追加できます。</p>'));
+    main.append(chRow('フォロー中',fol));
+    const slot=h('<p class="msg">最新の動画を読み込み中…</p>');main.append(slot);
+    const v=await API.feed(fol.slice(0,15));if(my!==token)return;
+    slot.replaceWith(h('<div class="head sub"><h1>新着</h1></div>'),grid(v,{}));
   },
   async hot(my){const v=await API.trending(null,50);if(my!==token)return;main.append(head('話題の動画'),grid(v,{}))},
   async lib(my){
@@ -197,7 +223,7 @@ function syncFollow(){$$('[data-act=follow]').forEach(b=>{const on=Fol.has(b.dat
 function detail(v){
   det.innerHTML=`<img class="dimg" src="${v.hi}" alt="" onerror="this.onerror=null;this.src='${v.thumb}'"><h2>${esc(v.title)}</h2>
   <p class="by">${v.cid?`<button data-ch="${v.cid}">${esc(v.channel)}</button>`:esc(v.channel)} · ${fmt(v.dur)}</p><p class="ds">${esc(v.desc)}</p>
-  <div class="acts"><button class="btn-sub" data-act="share" data-id="${v.id}">共有</button>${addBtn(v)}<button class="btn-play" data-act="play" data-id="${v.id}">${icon('play')}再生</button></div>`;
+  <div class="acts"><button class="btn-sub" data-act="share" data-id="${v.id}">共有</button><button class="btn-sub" data-act="queue" data-id="${v.id}">キュー</button>${addBtn(v)}<button class="btn-play" data-act="play" data-id="${v.id}">${icon('play')}再生</button></div>`;
   det.showModal();
 }
 const syncAdd=()=>$$('[data-act=add]').forEach(b=>b.innerHTML=icon(Lib.has(b.dataset.id)?'check':'plus'));
@@ -228,7 +254,7 @@ const Player={
     $('.mbar [data-act=pp]').innerHTML=icon(s===1?'pause':'play');
     if(s!==0)return;
     if(this.loop){this.p.seekTo(0);this.p.playVideo()}
-    else if(this.auto&&this.recs[0])this.open(this.recs[0]);
+    else if(this.auto){const n=this.nextUp();if(n)this.open(n)}
   },
   fail(){$('#ytp-wrap').append(h(`<div class="fail"><p>この動画はアプリ内で再生できません。</p><a class="btn-play" href="https://youtu.be/${this.v.id}" target="_blank" rel="noopener">YouTubeで開く</a></div>`))},
   info(v){
@@ -247,6 +273,7 @@ const Player={
     const v=this.v,box=$('.wact',this.el);if(!v||!box)return;const wl=Lib.has(v.id);
     box.innerHTML=`<button class="glass${wl?' on':''}" data-act="wladd" data-id="${v.id}">${icon(wl?'check':'plus')}ウォッチリスト</button>
       <button class="glass" data-act="share" data-id="${v.id}">共有</button>
+      <button class="glass" data-act="queue" data-id="${v.id}">${icon('queue')}キューに追加</button>
       <button class="glass" data-act="full">${icon('full')}全画面</button>
       <button class="glass" data-act="mini">${icon('pip')}ミニ再生</button>
       <button class="glass${this.spd!==1?' on':''}" data-act="rate">速度 ${this.spd}x</button>
@@ -255,13 +282,15 @@ const Player={
       <button class="glass${this.sleep?' on':''}" data-act="sleep">${icon('moon')}${this.sleep?this.sleep+'分後に停止':'スリープタイマー'}</button>`;
   },
   async recsFor(v){
-    const box=$('.wrec',this.el);box.innerHTML='<h3>次に観る</h3><div></div>';
+    const box=$('.wrec',this.el);const q=Store.get('queue',[]);
+    box.innerHTML=(q.length?'<h3>キュー</h3><div class="qd"></div>':'')+'<h3>おすすめ</h3><div class="rd"></div>';
+    if(q.length)$('.qd',box).append(...q.map(x=>{const c=card(reg(x),0);c.classList.add('rl');return c}));
     const [a,b]=await Promise.all([v.cid?API.uploads('UU'+v.cid.slice(2),10).catch(()=>[]):[],API.trending(v.cat&&v.cat!=='0'?v.cat:null,20).catch(()=>[])]);
     if(this.v!==v)return;
     const seen=new Set([v.id]),list=[];
     for(let i=0;i<Math.max(a.length,b.length);i++)for(const x of [a[i],b[i]])if(x&&!seen.has(x.id)){seen.add(x.id);list.push(x)}
     this.recs=list;
-    $('div',box).append(...list.map(x=>{const c=card(reg(x),0);c.classList.add('rl');return c}));
+    $('.rd',box).append(...list.map(x=>{const c=card(reg(x),0);c.classList.add('rl');return c}));
   },
   async comments(v){
     try{
@@ -276,10 +305,16 @@ const Player={
     const m=navigator.mediaSession;if(!m)return;
     m.metadata=new MediaMetadata({title:v.title,artist:v.channel,artwork:[{src:v.thumb,sizes:'480x360'}]});
     m.setActionHandler('play',()=>this.p?.playVideo());m.setActionHandler('pause',()=>this.p?.pauseVideo());
-    m.setActionHandler('nexttrack',()=>this.recs[0]&&this.open(this.recs[0]));
+    m.setActionHandler('nexttrack',()=>{const n=this.nextUp();if(n)this.open(n)});
   },
-  mini(){this.el.classList.add('mini');document.body.classList.remove('lock')},
-  expand(){this.el.style.cssText='';this.el.classList.remove('mini');document.body.classList.add('lock')},
+  nextUp(){const q=Store.get('queue',[]);if(q.length){Store.set('queue',q.slice(1));return q[0]}return this.recs[0]},
+  flip(fn){
+    const el=this.el,a=el.getBoundingClientRect();fn();const b=el.getBoundingClientRect();
+    el.animate([{transformOrigin:'0 0',transform:`translate(${a.left-b.left}px,${a.top-b.top}px) scale(${a.width/b.width},${a.height/b.height})`},
+      {transformOrigin:'0 0',transform:'none'}],{duration:560,easing:'cubic-bezier(.3,1.3,.5,1)'});
+  },
+  mini(){this.flip(()=>{this.el.style.translate='';this.el.style.opacity='';this.el.classList.add('mini');document.body.classList.remove('lock')})},
+  expand(){this.flip(()=>{this.el.style.cssText='';this.el.classList.remove('mini');document.body.classList.add('lock')})},
   toggle(){this.p?.getPlayerState?.()===1?this.p.pauseVideo():this.p?.playVideo()},
   full(){const w=$('#ytp-wrap'),f=w.requestFullscreen||w.webkitRequestFullscreen;if(f)f.call(w);else $('iframe',w)?.webkitEnterFullscreen?.()},
   nextRate(){const R=[1,1.25,1.5,2,.5,.75];this.spd=R[(R.indexOf(this.spd)+1)%R.length];this.p?.setPlaybackRate(this.spd);this.acts()},
@@ -306,9 +341,19 @@ const Player={
   g.addEventListener('pointermove',e=>{if(!d)return;el.style.inset='auto';
     el.style.left=Math.min(Math.max(0,e.clientX-d.x),innerWidth-el.offsetWidth)+'px';el.style.top=Math.min(Math.max(0,e.clientY-d.y),innerHeight-el.offsetHeight)+'px'});
   ['pointerup','pointercancel'].forEach(t=>g.addEventListener(t,()=>d=null))})();
+/* 視聴ページを下へスワイプしてミニ化 */
+(()=>{const wp=$('.wp',Player.el),el=Player.el;let y0=null,dy=0;
+  wp.addEventListener('touchstart',e=>{y0=wp.scrollTop<=0&&!Player.isMini?e.touches[0].clientY:null;dy=0},{passive:true});
+  wp.addEventListener('touchmove',e=>{if(y0==null)return;dy=e.touches[0].clientY-y0;
+    if(dy>0){el.style.translate='0 '+dy*.6+'px';el.style.opacity=1-Math.min(dy/700,.5)}else y0=null},{passive:true});
+  wp.addEventListener('touchend',()=>{if(y0==null)return;y0=null;
+    if(dy>130)return Player.mini();
+    el.style.transition='translate .5s cubic-bezier(.3,1.4,.5,1),opacity .3s';el.style.translate='';el.style.opacity='';setTimeout(()=>el.style.transition='',520)})})();
 
 /* ---------- Events ---------- */
 const dlg=$('#setup'),det=$('#detail');
+const slim=v=>({id:v.id,title:v.title,channel:v.channel,cid:v.cid,cat:v.cat,thumb:v.thumb,hi:v.hi,dur:v.dur});
+function toast(t){const e=h(`<div class="toast glass">${esc(t)}</div>`);document.body.append(e);setTimeout(()=>e.classList.add('out'),1700);setTimeout(()=>e.remove(),2200)}
 document.addEventListener('click',e=>{
   const a=e.target.closest('[data-act],[data-view],[data-ch],.card');if(!a)return;
   if(det.open&&(a.dataset.ch||a.dataset.act==='play'))det.close();
@@ -317,20 +362,21 @@ document.addEventListener('click',e=>{
   if(a.matches('.card'))return Player.open(VID.get(a.dataset.id));
   const v=VID.get(a.dataset.id);
   ({side:toggleSide,layout:layoutBtn,back:goBack,close:()=>Player.close(),play:()=>Player.open(v),info:()=>detail(v),share:()=>share(v),
-    add:()=>{Lib.toggle(v);syncAdd()},
+    add:()=>{Lib.toggle(v);syncAdd();toast(Lib.has(v.id)?'ウォッチリストに追加しました':'ウォッチリストから削除しました')},
     follow:()=>{const c=CH.get(a.dataset.id);if(c){Fol.toggle(c);syncFollow()}},
-    clear:()=>Store.set('hist',[]),
+    clear:()=>{Store.set('hist',[]);toast('視聴履歴を消去しました')},
+    queue:()=>{Store.set('queue',[...Store.get('queue',[]).filter(x=>x.id!==v.id),slim(v)]);toast('キューに追加しました');if(Player.v)Player.recsFor(Player.v)},
     mini:()=>Player.mini(),expand:()=>Player.expand(),pp:()=>Player.toggle(),full:()=>Player.full(),rate:()=>Player.nextRate(),sleep:()=>Player.nextSleep(),
     loop:()=>{Player.loop=!Player.loop;Player.acts()},auto:()=>{Player.auto=!Player.auto;Store.set('auto',Player.auto);Player.acts()},
-    wladd:()=>{Lib.toggle(v);Player.acts();syncAdd()},desc:()=>a.classList.toggle('open'),
-    setup:()=>{$('#key').value=Store.get('key','');$('#region').value=region();closeSide();dlg.showModal()}})[a.dataset.act]?.();
+    wladd:()=>{Lib.toggle(v);Player.acts();syncAdd();toast(Lib.has(v.id)?'ウォッチリストに追加しました':'ウォッチリストから削除しました')},desc:()=>a.classList.toggle('open'),
+    setup:()=>{$('#key').value=Store.get('key','');$('#region').value=region();$('#accent').value=Store.get('accent','#41a0ff');closeSide();dlg.showModal()}})[a.dataset.act]?.();
 });
 document.addEventListener('keydown',e=>{
   if(e.key==='Escape'&&Player.v&&!Player.isMini)Player.mini();
   if(e.key==='Enter'&&e.target.matches('.card'))Player.open(VID.get(e.target.dataset.id));
 });
 dlg.addEventListener('close',()=>{
-  if(dlg.returnValue==='ok'){Store.set('key',$('#key').value.trim());Store.set('region',$('#region').value);API.cache.clear();render(state.view,state.arg)}
+  if(dlg.returnValue==='ok'){Store.set('key',$('#key').value.trim());Store.set('region',$('#region').value);Store.set('accent',$('#accent').value);document.documentElement.style.setProperty('--accent',$('#accent').value);API.cache.clear();render(state.view,state.arg)}
 });
 /* tvOS風チルト */
 document.addEventListener('pointermove',e=>{
@@ -369,7 +415,11 @@ const Lens=(()=>{
     raf=requestAnimationFrame(loop);
   }
   function end(){
-    const{bar,lens}=S;S=null;bar.classList.remove('lens-on');mark(bar,true);setTimeout(()=>lens.remove(),260);
+    const{bar,lens,x,base}=S;S=null;const i=$('.ind',bar);
+    i.style.transition='none';i.style.left=(x-base/2)+'px';i.style.width=base+'px';i.offsetWidth;i.style.transition='';
+    bar.classList.remove('lens-on');
+    requestAnimationFrame(()=>{mark(bar);i.classList.remove('jelly');i.classList.add('settle');setTimeout(()=>i.classList.remove('settle'),700)});
+    setTimeout(()=>lens.remove(),520);
   }
   document.addEventListener('pointerdown',e=>{
     const b=e.target.closest?.('.nav button[aria-current],.seg button[aria-current]');
@@ -395,5 +445,6 @@ const Lens=(()=>{
   document.addEventListener('contextmenu',e=>{if(e.target.closest?.('.nav,.seg'))e.preventDefault()});
 })();
 matchMedia('(min-width:900px)').addEventListener('change',applyLayout);
+document.documentElement.style.setProperty('--accent',Store.get('accent','#41a0ff'));
 applyLayout();sideCh();render('home');
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
