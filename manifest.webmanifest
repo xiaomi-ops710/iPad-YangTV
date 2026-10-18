@@ -1,0 +1,1 @@
+{"name":"TV for YouTube","short_name":"TV","start_url":"./","scope":"./","display":"standalone","orientation":"any","background_color":"#000000","theme_color":"#000000","lang":"ja","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"},{"src":"icon-180.png","sizes":"180x180","type":"image/png"}]}
