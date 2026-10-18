@@ -15,10 +15,17 @@ const Lib={
   toggle(v){const l=Store.get('wl',[]);Store.set('wl',this.has(v.id)?l.filter(x=>x.id!==v.id):[v,...l])}
 };
 
+const CH=new Map();
+const Fol={has:id=>Store.get('fol',[]).some(c=>c.id===id),
+  toggle(c){const l=Store.get('fol',[]);Store.set('fol',this.has(c.id)?l.filter(x=>x.id!==c.id):[{id:c.id,name:c.name,avatar:c.avatar,subs:c.subs},...l])}};
+const fmtN=n=>n>=1e8?(n/1e8).toFixed(1)+'億':n>=1e4?(n/1e4).toFixed(n>=1e5?0:1)+'万':String(n);
+const region=()=>Store.get('region','JP');
 /* ---------- YouTube Data API ---------- */
+const nch=c=>{const s=c.snippet,t=c.statistics||{};return{id:c.id,name:s.title,handle:s.customUrl||'',avatar:(s.thumbnails.medium||s.thumbnails.default).url,
+  banner:c.brandingSettings?.image?.bannerExternalUrl,subs:t.hiddenSubscriberCount?null:+t.subscriberCount,count:+t.videoCount||0,desc:s.description||'',uploads:c.contentDetails.relatedPlaylists.uploads}};
 const iso=d=>{const m=/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(d)||[];return(+m[1]||0)*3600+(+m[2]||0)*60+(+m[3]||0)};
-const norm=i=>{const s=i.snippet,t=s.thumbnails;return{id:i.id,title:s.title,channel:s.channelTitle,desc:s.description||'',
-  thumb:(t.high||t.medium||t.default).url,hi:(t.maxres||t.standard||t.high||t.default).url,dur:iso(i.contentDetails.duration)}};
+const norm=i=>{const s=i.snippet,t=s.thumbnails;return{id:i.id,title:s.title,channel:s.channelTitle,cid:s.channelId,desc:s.description||'',
+  thumb:(t.high||t.medium||t.default).url,hi:(t.maxres||t.standard||t.high||t.default).url,dur:iso(i.contentDetails.duration),cat:s.categoryId,views:+i.statistics?.viewCount||0,pub:s.publishedAt}};
 const API={
   cache:new Map(),
   async call(ep,params){
@@ -30,12 +37,16 @@ const API={
     if(!r.ok)throw new Error(j.error?.message||r.status);
     this.cache.set(ck,j);return j;
   },
-  async videos(p){return(await this.call('videos',{part:'snippet,contentDetails',regionCode:'JP',...p})).items.map(norm)},
+  async videos(p){return(await this.call('videos',{part:'snippet,contentDetails,statistics',regionCode:region(),...p})).items.map(norm)},
   trending(cat,n=24){return this.videos({chart:'mostPopular',maxResults:n,...(cat?{videoCategoryId:cat}:{})})},
-  async search(q){
-    const s=await this.call('search',{part:'snippet',type:'video',maxResults:24,q,regionCode:'JP',safeSearch:'moderate'});
+  async vsearch(p){
+    const s=await this.call('search',{part:'snippet',type:'video',maxResults:24,regionCode:region(),safeSearch:'moderate',...p});
     return this.videos({id:s.items.map(i=>i.id.videoId).join(',')});
-  }
+  },
+  search(q){return this.vsearch({q})},
+  async chInfo(ids){return(await this.call('channels',{part:'snippet,statistics,contentDetails,brandingSettings',id:ids,maxResults:50})).items.map(nch)},
+  async channels(q){const s=await this.call('search',{part:'snippet',type:'channel',maxResults:20,q});return this.chInfo(s.items.map(i=>i.id.channelId).join(','))},
+  async uploads(pl,n){const j=await this.call('playlistItems',{part:'contentDetails',playlistId:pl,maxResults:n});return this.videos({id:j.items.map(i=>i.contentDetails.videoId).join(',')})}
 };
 
 /* ---------- Components ---------- */
@@ -48,7 +59,7 @@ function hero(list){
   list.forEach((v,i)=>el.append(h(`<div class="slide${i?'':' on'}"><img alt="" src="${v.hi}" onerror="this.onerror=null;this.src='${v.thumb}'">
     <div class="hero-body"><h1>${esc(v.title)}</h1><p class="sub">YouTube · ${esc(v.channel)} · ${fmt(v.dur)}</p>
     <p class="desc">${esc(v.desc)}</p>
-    <div class="btns"><button class="btn-play" data-act="play" data-id="${v.id}">${icon('play')}再生</button>${addBtn(v)}</div></div></div>`)));
+    <div class="btns"><button class="btn-play" data-act="play" data-id="${v.id}">${icon('play')}再生</button>${addBtn(v)}<button class="btn-add glass" data-act="info" data-id="${v.id}" aria-label="詳細">${icon('info')}</button></div></div></div>`)));
   const dots=h(`<div class="dots">${list.map((_,i)=>`<i data-dot="${i}"></i>`).join('')}</div>`);el.append(dots);
   let i=0;
   const set=n=>{i=(n+list.length)%list.length;$$('.slide',el).forEach((s,k)=>s.classList.toggle('on',k===i));$$('i',dots).forEach((d,k)=>d.classList.toggle('on',k===i))};
@@ -58,119 +69,268 @@ function hero(list){
 }
 function card(v,i,o={}){
   const p=o.progress&&v.d?Math.min(1,v.t/v.d):0;
-  return h(`<article class="card" tabindex="0" data-id="${v.id}"><div class="thumb"><img loading="lazy" alt="" src="${v.thumb}">
+  return h(`<article class="card" tabindex="0" data-id="${v.id}"><div class="thumb"><img loading="lazy" alt="" src="${v.thumb}"><button class="more glass" data-act="info" data-id="${v.id}" aria-label="詳細">${icon('more')}</button>
     ${o.rank?`<span class="rank">${i+1}</span>`:''}
     ${p?`<span class="bar" style="--p:${p*100}%"><i></i></span>`:`<span class="dur">${fmt(v.dur)}</span>`}</div>
-    <div class="meta"><b>${esc(v.title)}</b><span>${esc(v.channel)}${p?` · 残り${Math.ceil((v.d-v.t)/60)}分`:''}</span></div></article>`);
+    <div class="meta"><b>${esc(v.title)}</b><span${v.cid?` data-ch="${v.cid}"`:''}>${esc(v.channel)}${p?` · 残り${Math.ceil((v.d-v.t)/60)}分`:''}</span></div></article>`);
 }
 function row(title,items,o={}){
   const s=h(`<section class="row"><h2>${esc(title)}${icon('chev')}</h2><div class="rail"></div></section>`);
   $('.rail',s).append(...items.map((v,i)=>card(reg(v),i,o)));return s;
 }
 const grid=(items,o)=>{const g=h('<div class="grid"></div>');g.append(...items.map((v,i)=>card(reg(v),i,o)));return g};
+const chCard=c=>h(`<button class="chc" data-ch="${c.id}"><img src="${c.avatar}" alt=""><b>${esc(c.name)}</b>${c.subs!=null?`<span>登録者 ${fmtN(c.subs)}人</span>`:''}</button>`);
+const chRow=(t,l)=>{const s=h(`<section class="row"><h2>${esc(t)}${icon('chev')}</h2><div class="rail chr"></div></section>`);$('.rail',s).append(...l.map(chCard));return s};
+/* Liquid Glass セグメント（レンズ型インジケータ） */
+const mark=(el,now)=>{const b=$('[aria-current]',el),i=$('.ind',el);if(!b||!i)return;
+  if(now)i.style.transition='none';i.style.left=b.offsetLeft+'px';i.style.width=b.offsetWidth+'px';if(now){i.offsetWidth;i.style.transition=''}};
+function seg(items,cur,cb,cls=''){
+  const el=h(`<div class="seg glass ${cls}"><span class="ind"></span>${items.map(([k,t])=>`<button data-k="${k}"${k===cur?' aria-current="true"':''}>${esc(t)}</button>`).join('')}</div>`);
+  el.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;
+    $$('button',el).forEach(x=>x.removeAttribute('aria-current'));b.setAttribute('aria-current','true');mark(el);
+    b.scrollIntoView?.({inline:'center',block:'nearest',behavior:'smooth'});cb(b.dataset.k)});
+  requestAnimationFrame(()=>mark(el,true));return el;
+}
 const head=t=>h(`<div class="head"><h1>${esc(t)}</h1></div>`);
 const continueList=()=>Store.get('hist',[]).filter(x=>x.d&&x.t>5&&x.t<x.d*.95);
 
 /* ---------- Views ---------- */
-const main=$('#main'),state={view:'home'};let token=0;
-const ROWS=[{t:'ミュージック',c:10},{t:'ゲーム',c:20},{t:'エンタメ',c:24},{t:'スポーツ',c:17},{t:'ニュース',c:25}];
+const main=$('#main'),state={view:'home',cat:'all',stack:[]};let token=0,sub=0;
+const CATS=[['all','すべて'],['10','ミュージック'],['20','ゲーム'],['24','エンタメ'],['17','スポーツ'],['23','コメディ'],['25','ニュース'],['28','サイエンス']];
+const ROWS=[['ミュージック',10],['ゲーム',20],['エンタメ',24],['スポーツ',17],['ニュース',25]];
 const VIEWS={
   async home(my){
-    const hot=await API.trending(null,24);if(my!==token)return;
-    hot.forEach(reg);main.append(hero(hot.slice(0,6)));
-    const body=h('<div class="rows"></div>');main.append(body);
-    const hist=continueList();if(hist.length)body.append(row('続きを観る',hist,{progress:1}));
-    const wl=Store.get('wl',[]);if(wl.length)body.append(row('次に観る',wl));
-    body.append(row('トップ10：話題',hot.slice(0,10),{rank:1}),row('話題の動画',hot.slice(10)));
-    ROWS.forEach(r=>{const slot=h('<div></div>');body.append(slot);
-      API.trending(r.c).then(v=>{if(my===token)slot.append(row(r.t,v))}).catch(()=>{})});
+    const body=h('<div class="catbody"></div>');
+    const fill=async()=>{
+      const c=state.cat,t=++sub;clearInterval(heroTimer);body.replaceChildren();
+      try{
+        const hot=await API.trending(c==='all'?null:c,24);if(my!==token||t!==sub)return;
+        hot.forEach(reg);body.append(hero(hot.slice(0,6)));
+        const rows=h('<div class="rows"></div>');body.append(rows);
+        if(c==='all'){
+          const hist=continueList(),wl=Store.get('wl',[]),fol=Store.get('fol',[]);
+          if(hist.length)rows.append(row('続きを観る',hist,{progress:1}));
+          if(wl.length)rows.append(row('次に観る',wl));
+          if(fol.length)rows.append(chRow('フォロー中のチャンネル',fol));
+        }
+        rows.append(row(c==='all'?'トップ10：話題':'トップ10：'+CATS.find(x=>x[0]===c)[1],hot.slice(0,10),{rank:1}),row('話題の動画',hot.slice(10)));
+        if(c==='all')ROWS.forEach(([n,k])=>{const slot=h('<div></div>');rows.append(slot);
+          API.trending(k).then(v=>{if(my===token&&t===sub)slot.append(row(n,v))}).catch(()=>{})});
+      }catch(e){if(my===token&&t===sub)body.append(notice('読み込めませんでした',e.message,'APIキーを確認'))}
+    };
+    main.append(seg(CATS,state.cat,k=>{state.cat=k;fill()},'cats'),body);
+    await fill();
   },
   async hot(my){const v=await API.trending(null,50);if(my!==token)return;main.append(head('話題の動画'),grid(v,{}))},
   async lib(my){
     main.append(head('ライブラリ'));
-    const wl=Store.get('wl',[]),hist=Store.get('hist',[]);
-    if(!wl.length&&!hist.length)return main.append(h('<p class="msg">ウォッチリストに追加した動画や視聴履歴がここに表示されます。</p>'));
+    const wl=Store.get('wl',[]),hist=Store.get('hist',[]),fol=Store.get('fol',[]);
+    if(!wl.length&&!hist.length&&!fol.length)return main.append(h('<p class="msg">フォローしたチャンネル、ウォッチリスト、視聴履歴がここに表示されます。</p>'));
     const body=h('<div class="rows"></div>');main.append(body);
+    if(fol.length)body.append(chRow('フォロー中のチャンネル',fol));
     if(wl.length)body.append(row('次に観る',wl));
     if(hist.length)body.append(row('視聴履歴',hist,{progress:1}));
   },
   async search(){
     main.append(head('検索'));
-    const f=h(`<form class="sbar glass">${icon('search')}<input type="search" placeholder="動画を検索" enterkeyhint="search" autofocus></form>`),res=h('<div></div>');
-    main.append(f,res);
-    f.addEventListener('submit',async e=>{e.preventDefault();const q=$('input',f).value.trim();if(!q)return;
+    let mode='v';
+    const f=h(`<form class="sbar glass">${icon('search')}<input type="search" placeholder="動画・チャンネルを検索" enterkeyhint="search" autofocus></form>`),
+      res=h('<div></div>'),inp=$('input',f),rec=h('<div class="chips"></div>');
+    const drawRec=()=>{rec.innerHTML=Store.get('recent',[]).map(q=>`<button data-q="${esc(q)}">${esc(q)}</button>`).join('')};
+    const run=async()=>{
+      const q=inp.value.trim();if(!q)return;
+      Store.set('recent',[q,...Store.get('recent',[]).filter(x=>x!==q)].slice(0,8));drawRec();
       res.replaceChildren(h('<p class="msg">検索中…</p>'));
-      try{res.replaceChildren(grid(await API.search(q),{}))}catch(err){res.replaceChildren(h(`<p class="msg">${esc(err.message)}</p>`))}});
+      try{
+        const m=q.match(/(?:youtu\.be\/|[?&]v=|shorts\/)([\w-]{11})/);
+        if(m){const[v]=await API.videos({id:m[1]});res.replaceChildren();if(v){reg(v);Player.open(v)}return}
+        if(mode==='v')res.replaceChildren(grid(await API.search(q),{}));
+        else{const cs=await API.channels(q),g=h('<div class="grid chg"></div>');cs.forEach(c=>CH.set(c.id,c));g.append(...cs.map(chCard));res.replaceChildren(g)}
+      }catch(err){res.replaceChildren(h(`<p class="msg">${esc(err.message)}</p>`))}
+    };
+    const tabs=seg([['v','動画'],['c','チャンネル']],'v',k=>{mode=k;if(inp.value.trim())run()},'smode');
+    f.addEventListener('submit',e=>{e.preventDefault();run()});
+    rec.addEventListener('click',e=>{const b=e.target.closest('[data-q]');if(b){inp.value=b.dataset.q;run()}});
+    drawRec();main.append(f,tabs,rec,res);
+  },
+  async channel(my,id){
+    const c=(await API.chInfo(id))[0];if(my!==token)return;if(!c)throw new Error('チャンネルが見つかりません');
+    CH.set(c.id,c);
+    main.append(h(`<header class="chh"${c.banner?` style="--bn:url('${c.banner}')"`:''}><button class="back glass" data-act="back" aria-label="戻る">${icon('chev')}</button>
+      <img class="chav" src="${c.avatar}" alt=""><div class="chi"><h1>${esc(c.name)}</h1>
+      <p>${[c.handle,c.subs!=null&&'登録者 '+fmtN(c.subs)+'人','動画 '+c.count.toLocaleString()+'本'].filter(Boolean).map(esc).join(' · ')}</p>
+      <p class="desc">${esc(c.desc)}</p><div class="btns"><button class="btn-play" data-act="follow" data-id="${c.id}"></button></div></div></header>`));
+    syncFollow();
+    const list=h('<div></div>');
+    const load=async k=>{
+      list.replaceChildren(h('<p class="msg">読み込み中…</p>'));
+      try{const v=k==='new'?await API.uploads(c.uploads,36):await API.vsearch({channelId:c.id,order:'viewCount'});if(my!==token)return;list.replaceChildren(grid(v,{}))}
+      catch(e){list.replaceChildren(h(`<p class="msg">${esc(e.message)}</p>`))}
+    };
+    main.append(seg([['new','最新'],['pop','人気']],'new',load,'smode'),list);load('new');
   }
 };
 const notice=(t,p,btn)=>h(`<div class="empty"><h1>${t}</h1><p>${esc(p)}</p>${btn?`<button class="btn-play" data-act="setup">${btn}</button>`:''}</div>`);
-async function render(view){
-  const my=++token;state.view=view;markNav(view);closeSide();clearInterval(heroTimer);scrollTo(0,0);main.replaceChildren();
+async function render(view,arg,back){
+  const my=++token;
+  if(!back&&state.ready&&(view!==state.view||arg!==state.arg))state.stack=[...state.stack,[state.view,state.arg]].slice(-20);
+  state.ready=1;state.view=view;state.arg=arg;markNav(view);closeSide();clearInterval(heroTimer);scrollTo(0,0);main.replaceChildren();
   if(!Store.get('key',''))return main.append(notice('APIキーを設定','YouTube Data API v3 のキーを登録すると、動画を表示できます。','設定を開く'));
-  try{await VIEWS[view](my)}catch(e){if(my===token)main.append(notice('読み込めませんでした',e.message,'APIキーを確認'))}
+  try{await VIEWS[view](my,arg)}catch(e){if(my===token)main.append(notice('読み込めませんでした',e.message,'APIキーを確認'))}
 }
 
 /* ---------- Navigation ---------- */
 function markNav(v){
   $$('[data-view]').forEach(b=>b.dataset.view===v?b.setAttribute('aria-current','page'):b.removeAttribute('aria-current'));
-  const b=$('#nav [aria-current]'),i=$('.ind');
-  if(b){i.style.left=b.offsetLeft+'px';i.style.width=b.offsetWidth+'px'}
+  mark($('#nav'));
 }
+const wide=()=>matchMedia('(min-width:900px)').matches;
+function applyLayout(){document.body.dataset.layout=wide()&&Store.get('layout','tab')==='side'?'side':'tab';requestAnimationFrame(()=>markNav(state.view))}
 const closeSide=()=>{$('#side').classList.remove('open');$('#scrim').classList.remove('on')};
 const toggleSide=()=>{$('#side').classList.toggle('open');$('#scrim').classList.toggle('on')};
+function layoutBtn(){if(!wide())return toggleSide();Store.set('layout',document.body.dataset.layout==='side'?'tab':'side');applyLayout()}
+const goBack=()=>{const p=state.stack.pop();if(p)render(p[0],p[1],true)};
+const share=async v=>{const u='https://youtu.be/'+v.id;try{navigator.share?await navigator.share({title:v.title,url:u}):await navigator.clipboard.writeText(u)}catch{}};
+function sideCh(){const l=Store.get('fol',[]).slice(0,8);
+  $('#sideCh').innerHTML=l.length?'<p class="lbl">フォロー中</p>'+l.map(c=>`<button data-ch="${c.id}"><img class="av" src="${c.avatar}" alt="">${esc(c.name)}</button>`).join(''):''}
+function syncFollow(){$$('[data-act=follow]').forEach(b=>{const on=Fol.has(b.dataset.id);b.innerHTML=icon(on?'check':'plus')+(on?'フォロー中':'フォロー');b.classList.toggle('on',on)});sideCh()}
+function detail(v){
+  det.innerHTML=`<img class="dimg" src="${v.hi}" alt="" onerror="this.onerror=null;this.src='${v.thumb}'"><h2>${esc(v.title)}</h2>
+  <p class="by">${v.cid?`<button data-ch="${v.cid}">${esc(v.channel)}</button>`:esc(v.channel)} · ${fmt(v.dur)}</p><p class="ds">${esc(v.desc)}</p>
+  <div class="acts"><button class="btn-sub" data-act="share" data-id="${v.id}">共有</button>${addBtn(v)}<button class="btn-play" data-act="play" data-id="${v.id}">${icon('play')}再生</button></div>`;
+  det.showModal();
+}
 const syncAdd=()=>$$('[data-act=add]').forEach(b=>b.innerHTML=icon(Lib.has(b.dataset.id)?'check':'plus'));
 
 /* ---------- Player (IFrame API) ---------- */
 const Player={
-  el:$('#player'),p:null,v:null,tick:null,idle:null,ready:null,
+  el:$('#player'),p:null,v:null,tick:null,ready:null,recs:[],spd:1,loop:false,sleep:0,sleepT:null,auto:Store.get('auto',true),
   sdk(){return this.ready??=new Promise(r=>{if(window.YT?.Player)return r();window.onYouTubeIframeAPIReady=r;
     const s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';document.head.append(s)})},
-  poke(){this.el.classList.remove('idle');clearTimeout(this.idle);this.idle=setTimeout(()=>this.el.classList.add('idle'),3000)},
+  get isMini(){return this.el.classList.contains('mini')},
   async open(v){
-    this.v=v;this.el.classList.add('on');$('.t',this.el).textContent=v.title;this.poke();
-    try{await this.el.requestFullscreen?.({navigationUI:'hide'})}catch{}
-    const t=Math.floor(Store.get('hist',[]).find(x=>x.id===v.id)?.t||0);
+    this.save();this.v=v;this.recs=[];this.el.style.cssText='';this.el.classList.remove('mini');this.el.classList.add('on');
+    document.body.classList.add('lock');$('.wp',this.el).scrollTop=0;
+    this.info(v);this.session(v);
+    const t=Math.floor(Store.get('hist',[]).find(x=>x.id===v.id)?.t||0),st=t>10?t-3:0;
     await this.sdk();if(this.v!==v)return;
-    $('#ytp-wrap').innerHTML='<div id="ytp"></div>';
-    this.p=new YT.Player('ytp',{videoId:v.id,playerVars:{autoplay:1,playsinline:1,rel:0,start:t>10?t-3:0,origin:location.origin},
-      events:{onReady:e=>e.target.playVideo(),
-        onError:()=>$('#ytp-wrap').innerHTML=`<div class="fail"><p>この動画はアプリ内で再生できません。</p><a class="btn-play" href="https://youtu.be/${v.id}" target="_blank" rel="noopener">YouTubeで開く</a></div>`}});
+    $('#ytp-wrap .fail')?.remove();
+    if(this.p?.loadVideoById)this.p.loadVideoById({videoId:v.id,startSeconds:st});
+    else{
+      $('#ytp-wrap').innerHTML='<div id="ytp"></div>';
+      this.p=new YT.Player('ytp',{videoId:v.id,playerVars:{autoplay:1,playsinline:1,rel:0,fs:1,start:st,origin:location.origin},
+        events:{onReady:e=>{e.target.setPlaybackRate(this.spd);e.target.playVideo()},onStateChange:e=>this.state(e.data),onError:()=>this.fail()}});
+    }
     clearInterval(this.tick);this.tick=setInterval(()=>this.save(),4000);
+    this.recsFor(v);this.comments(v);
   },
+  state(s){
+    $('.mbar [data-act=pp]').innerHTML=icon(s===1?'pause':'play');
+    if(s!==0)return;
+    if(this.loop){this.p.seekTo(0);this.p.playVideo()}
+    else if(this.auto&&this.recs[0])this.open(this.recs[0]);
+  },
+  fail(){$('#ytp-wrap').append(h(`<div class="fail"><p>この動画はアプリ内で再生できません。</p><a class="btn-play" href="https://youtu.be/${this.v.id}" target="_blank" rel="noopener">YouTubeで開く</a></div>`))},
+  info(v){
+    const date=v.pub?new Date(v.pub).toLocaleDateString('ja-JP'):'';
+    $('.winfo',this.el).innerHTML=`<h2>${esc(v.title)}</h2>
+      <p class="wstat">${[v.views?fmtN(v.views)+'回視聴':'',date,fmt(v.dur)].filter(Boolean).join(' · ')}</p>
+      <div class="wch"><img id="wav" alt=""><div class="nm"><b>${v.cid?`<button data-ch="${v.cid}">${esc(v.channel)}</button>`:esc(v.channel)}</b><span id="wsub"></span></div>
+        ${v.cid?`<button class="btn-play" data-act="follow" data-id="${v.cid}" hidden></button>`:''}</div>
+      <div class="wact"></div><div class="wdesc" data-act="desc">${esc(v.desc||'説明はありません')}</div>
+      <div class="wcm" hidden><h3>コメント</h3><div id="wcl"></div></div>`;
+    this.acts();
+    if(v.cid)API.chInfo(v.cid).then(r=>{const c=r[0];if(!c||this.v!==v)return;CH.set(c.id,c);
+      $('#wav').src=c.avatar;$('#wsub').textContent=c.subs!=null?'登録者 '+fmtN(c.subs)+'人':'';$('.wch .btn-play').hidden=false;syncFollow()}).catch(()=>{});
+  },
+  acts(){
+    const v=this.v,box=$('.wact',this.el);if(!v||!box)return;const wl=Lib.has(v.id);
+    box.innerHTML=`<button class="glass${wl?' on':''}" data-act="wladd" data-id="${v.id}">${icon(wl?'check':'plus')}ウォッチリスト</button>
+      <button class="glass" data-act="share" data-id="${v.id}">共有</button>
+      <button class="glass" data-act="full">${icon('full')}全画面</button>
+      <button class="glass" data-act="mini">${icon('pip')}ミニ再生</button>
+      <button class="glass${this.spd!==1?' on':''}" data-act="rate">速度 ${this.spd}x</button>
+      <button class="glass${this.loop?' on':''}" data-act="loop">${icon('repeat')}ループ</button>
+      <button class="glass${this.auto?' on':''}" data-act="auto">自動再生</button>
+      <button class="glass${this.sleep?' on':''}" data-act="sleep">${icon('moon')}${this.sleep?this.sleep+'分後に停止':'スリープタイマー'}</button>`;
+  },
+  async recsFor(v){
+    const box=$('.wrec',this.el);box.innerHTML='<h3>次に観る</h3><div></div>';
+    const [a,b]=await Promise.all([v.cid?API.uploads('UU'+v.cid.slice(2),10).catch(()=>[]):[],API.trending(v.cat&&v.cat!=='0'?v.cat:null,20).catch(()=>[])]);
+    if(this.v!==v)return;
+    const seen=new Set([v.id]),list=[];
+    for(let i=0;i<Math.max(a.length,b.length);i++)for(const x of [a[i],b[i]])if(x&&!seen.has(x.id)){seen.add(x.id);list.push(x)}
+    this.recs=list;
+    $('div',box).append(...list.map(x=>{const c=card(reg(x),0);c.classList.add('rl');return c}));
+  },
+  async comments(v){
+    try{
+      const j=await API.call('commentThreads',{part:'snippet',videoId:v.id,maxResults:20,order:'relevance',textFormat:'plainText'});
+      if(this.v!==v||!j.items.length)return;
+      $('.wcm',this.el).hidden=false;
+      $('#wcl').innerHTML=j.items.map(i=>{const s=i.snippet.topLevelComment.snippet;
+        return `<div class="cm"><img src="${esc(s.authorProfileImageUrl)}" alt=""><div><b>${esc(s.authorDisplayName)}</b><p>${esc(s.textDisplay)}</p></div></div>`}).join('');
+    }catch{}
+  },
+  session(v){
+    const m=navigator.mediaSession;if(!m)return;
+    m.metadata=new MediaMetadata({title:v.title,artist:v.channel,artwork:[{src:v.thumb,sizes:'480x360'}]});
+    m.setActionHandler('play',()=>this.p?.playVideo());m.setActionHandler('pause',()=>this.p?.pauseVideo());
+    m.setActionHandler('nexttrack',()=>this.recs[0]&&this.open(this.recs[0]));
+  },
+  mini(){this.el.classList.add('mini');document.body.classList.remove('lock')},
+  expand(){this.el.style.cssText='';this.el.classList.remove('mini');document.body.classList.add('lock')},
+  toggle(){this.p?.getPlayerState?.()===1?this.p.pauseVideo():this.p?.playVideo()},
+  full(){const w=$('#ytp-wrap'),f=w.requestFullscreen||w.webkitRequestFullscreen;if(f)f.call(w);else $('iframe',w)?.webkitEnterFullscreen?.()},
+  nextRate(){const R=[1,1.25,1.5,2,.5,.75];this.spd=R[(R.indexOf(this.spd)+1)%R.length];this.p?.setPlaybackRate(this.spd);this.acts()},
+  nextSleep(){const S=[0,15,30,60];this.sleep=S[(S.indexOf(this.sleep)+1)%S.length];clearTimeout(this.sleepT);
+    if(this.sleep)this.sleepT=setTimeout(()=>{this.p?.pauseVideo();this.sleep=0;this.acts()},this.sleep*60000);this.acts()},
   save(){
     const p=this.p;if(!p?.getCurrentTime||!this.v)return;
     const t=p.getCurrentTime(),d=p.getDuration();if(!(d>0)||t<3)return;
-    const{id,title,channel,thumb,hi,dur}=this.v;
-    Store.set('hist',[{id,title,channel,thumb,hi,dur,t,d,at:Date.now()},...Store.get('hist',[]).filter(x=>x.id!==id)].slice(0,30));
+    const{id,title,channel,cid,cat,thumb,hi,dur}=this.v;
+    Store.set('hist',[{id,title,channel,cid,cat,thumb,hi,dur,t,d,at:Date.now()},...Store.get('hist',[]).filter(x=>x.id!==id)].slice(0,30));
   },
   close(){
-    this.save();clearInterval(this.tick);try{this.p?.destroy()}catch{}
-    this.p=this.v=null;this.el.classList.remove('on');
+    const full=!this.isMini;this.save();clearInterval(this.tick);clearTimeout(this.sleepT);this.sleep=0;
+    try{this.p?.destroy()}catch{}
+    this.p=this.v=null;this.el.style.cssText='';this.el.classList.remove('on','mini');document.body.classList.remove('lock');
     if(document.fullscreenElement)document.exitFullscreen?.();
-    if(state.view==='home'||state.view==='lib')render(state.view);
+    if(navigator.mediaSession)navigator.mediaSession.metadata=null;
+    if(full&&(state.view==='home'||state.view==='lib'))render(state.view,state.arg);
   }
 };
-$('.zone').addEventListener('pointermove',()=>Player.poke());
-$('.zone').addEventListener('pointerdown',()=>Player.poke());
+/* ミニプレーヤーのドラッグ移動 */
+(()=>{const g=$('.mbar .grab'),el=Player.el;let d=null;
+  g.addEventListener('pointerdown',e=>{const r=el.getBoundingClientRect();d={x:e.clientX-r.left,y:e.clientY-r.top};g.setPointerCapture(e.pointerId)});
+  g.addEventListener('pointermove',e=>{if(!d)return;el.style.inset='auto';
+    el.style.left=Math.min(Math.max(0,e.clientX-d.x),innerWidth-el.offsetWidth)+'px';el.style.top=Math.min(Math.max(0,e.clientY-d.y),innerHeight-el.offsetHeight)+'px'});
+  ['pointerup','pointercancel'].forEach(t=>g.addEventListener(t,()=>d=null))})();
 
 /* ---------- Events ---------- */
-const dlg=$('#setup');
+const dlg=$('#setup'),det=$('#detail');
 document.addEventListener('click',e=>{
-  const a=e.target.closest('[data-act],[data-view],.card');if(!a)return;
+  const a=e.target.closest('[data-act],[data-view],[data-ch],.card');if(!a)return;
+  if(det.open&&(a.dataset.ch||a.dataset.act==='play'))det.close();
   if(a.dataset.view)return render(a.dataset.view);
+  if(a.dataset.ch){if(Player.v&&!Player.isMini)Player.mini();return render('channel',a.dataset.ch)}
   if(a.matches('.card'))return Player.open(VID.get(a.dataset.id));
   const v=VID.get(a.dataset.id);
-  ({side:toggleSide,close:()=>Player.close(),
-    play:()=>Player.open(v),
+  ({side:toggleSide,layout:layoutBtn,back:goBack,close:()=>Player.close(),play:()=>Player.open(v),info:()=>detail(v),share:()=>share(v),
     add:()=>{Lib.toggle(v);syncAdd()},
-    setup:()=>{$('#key').value=Store.get('key','');closeSide();dlg.showModal()}})[a.dataset.act]?.();
+    follow:()=>{const c=CH.get(a.dataset.id);if(c){Fol.toggle(c);syncFollow()}},
+    clear:()=>Store.set('hist',[]),
+    mini:()=>Player.mini(),expand:()=>Player.expand(),pp:()=>Player.toggle(),full:()=>Player.full(),rate:()=>Player.nextRate(),sleep:()=>Player.nextSleep(),
+    loop:()=>{Player.loop=!Player.loop;Player.acts()},auto:()=>{Player.auto=!Player.auto;Store.set('auto',Player.auto);Player.acts()},
+    wladd:()=>{Lib.toggle(v);Player.acts();syncAdd()},desc:()=>a.classList.toggle('open'),
+    setup:()=>{$('#key').value=Store.get('key','');$('#region').value=region();closeSide();dlg.showModal()}})[a.dataset.act]?.();
 });
 document.addEventListener('keydown',e=>{
-  if(e.key==='Escape'&&Player.v)Player.close();
+  if(e.key==='Escape'&&Player.v&&!Player.isMini)Player.mini();
   if(e.key==='Enter'&&e.target.matches('.card'))Player.open(VID.get(e.target.dataset.id));
 });
 dlg.addEventListener('close',()=>{
-  if(dlg.returnValue==='ok'){Store.set('key',$('#key').value.trim());API.cache.clear();render(state.view)}
+  if(dlg.returnValue==='ok'){Store.set('key',$('#key').value.trim());Store.set('region',$('#region').value);API.cache.clear();render(state.view,state.arg)}
 });
 /* tvOS風チルト */
 document.addEventListener('pointermove',e=>{
@@ -182,5 +342,8 @@ document.addEventListener('pointermove',e=>{
 document.addEventListener('pointerout',e=>{const c=e.target.closest?.('.card');if(c){c.style.removeProperty('--rx');c.style.removeProperty('--ry')}});
 addEventListener('resize',()=>markNav(state.view));
 
-render('home');
+document.addEventListener('pointerdown',e=>e.target.closest?.('.nav,.seg')?.classList.add('press'));
+['pointerup','pointercancel'].forEach(t=>addEventListener(t,()=>$$('.press').forEach(x=>x.classList.remove('press'))));
+matchMedia('(min-width:900px)').addEventListener('change',applyLayout);
+applyLayout();sideCh();render('home');
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
