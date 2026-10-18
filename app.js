@@ -342,8 +342,58 @@ document.addEventListener('pointermove',e=>{
 document.addEventListener('pointerout',e=>{const c=e.target.closest?.('.card');if(c){c.style.removeProperty('--rx');c.style.removeProperty('--ry')}});
 addEventListener('resize',()=>markNav(state.view));
 
-document.addEventListener('pointerdown',e=>e.target.closest?.('.nav,.seg')?.classList.add('press'));
-['pointerup','pointercancel'].forEach(t=>addEventListener(t,()=>$$('.press').forEach(x=>x.classList.remove('press'))));
+/* ---------- Liquid Glass レンズ: 選択中タブを長押し→ドラッグで移動 ---------- */
+const Lens=(()=>{
+  let S=null,raf=0,block=false;
+  const cx=b=>b.offsetLeft+b.offsetWidth/2;
+  const tabsOf=bar=>$$('button[data-view],button[data-k]',bar).filter(b=>b.offsetParent);
+  const paint=()=>{const w=S.base+Math.min(Math.abs(S.v)*.05,28);   // 速いほど横に伸びる
+    S.lens.style.setProperty('--lw',w+'px');S.lens.style.setProperty('--lx',(S.x-w/2)+'px')};
+  function activate(){
+    const{bar,btn}=S,r=bar.getBoundingClientRect(),tabs=tabsOf(bar);
+    Object.assign(S,{on:true,tabs,min:cx(tabs[0]),max:cx(tabs[tabs.length-1]),base:Math.max(btn.offsetWidth+30,88),x:cx(btn),v:0});
+    S.target=S.x;S.off=S.x-(S.sx-r.left+bar.scrollLeft);
+    const html=[...bar.children].filter(c=>c.tagName==='BUTTON').map(b=>b.outerHTML).join('');
+    const lens=h(`<div class="lens" aria-hidden="true">${['a','b'].map(k=>`<div class="lw ${k}"><div class="lc">${html}</div></div>`).join('')}</div>`);
+    lens.style.setProperty('--bw',bar.scrollWidth+'px');lens.style.setProperty('--bh',bar.clientHeight+'px');
+    S.lens=lens;bar.append(lens);paint();
+    requestAnimationFrame(()=>bar.classList.add('lens-on'));
+    bar.setPointerCapture?.(S.id);navigator.vibrate?.(6);
+    S.last=performance.now();raf=requestAnimationFrame(loop);
+  }
+  function loop(t){
+    const dt=Math.min((t-S.last)/1000,1/30);S.last=t;
+    const a=300*(S.target-S.x)-17*S.v;           // 減衰不足のバネ（弾む）
+    S.v+=a*dt;S.x+=S.v*dt;paint();
+    if(S.released&&Math.abs(S.target-S.x)<.4&&Math.abs(S.v)<8)return end();
+    raf=requestAnimationFrame(loop);
+  }
+  function end(){
+    const{bar,lens}=S;S=null;bar.classList.remove('lens-on');mark(bar,true);setTimeout(()=>lens.remove(),260);
+  }
+  document.addEventListener('pointerdown',e=>{
+    const b=e.target.closest?.('.nav button[aria-current],.seg button[aria-current]');
+    if(!b||S||!e.isPrimary)return;
+    S={bar:b.closest('.nav,.seg'),btn:b,id:e.pointerId,sx:e.clientX,sy:e.clientY,on:false,timer:setTimeout(activate,260)};
+  });
+  document.addEventListener('pointermove',e=>{
+    if(!S||e.pointerId!==S.id)return;
+    if(!S.on){if(Math.hypot(e.clientX-S.sx,e.clientY-S.sy)>8){clearTimeout(S.timer);S=null}return}
+    const r=S.bar.getBoundingClientRect();
+    S.target=Math.min(Math.max(e.clientX-r.left+S.bar.scrollLeft+S.off,S.min),S.max);
+  });
+  const up=e=>{
+    if(!S||e.pointerId!==S.id)return;
+    clearTimeout(S.timer);if(!S.on){S=null;return}
+    const t=S.tabs.reduce((a,b)=>Math.abs(cx(b)-S.target)<Math.abs(cx(a)-S.target)?b:a);
+    S.target=cx(t);S.released=true;block=true;
+    setTimeout(()=>{block=false;if(t!==S?.btn&&!t.matches('[aria-current]'))t.click()},0);
+  };
+  ['pointerup','pointercancel'].forEach(t=>document.addEventListener(t,up));
+  document.addEventListener('click',e=>{if(block){e.stopPropagation();e.preventDefault()}},true);
+  document.addEventListener('touchmove',e=>{if(S?.on)e.preventDefault()},{passive:false});
+  document.addEventListener('contextmenu',e=>{if(e.target.closest?.('.nav,.seg'))e.preventDefault()});
+})();
 matchMedia('(min-width:900px)').addEventListener('change',applyLayout);
 applyLayout();sideCh();render('home');
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
