@@ -285,3 +285,113 @@ main>*{animation:vin .6s var(--ease) backwards}
 .toast{position:fixed;z-index:200;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 26px);translate:-50% 0;padding:12px 22px;border-radius:999px;font-weight:600;font-size:15px;animation:toastin .5s var(--spring2)}
 .toast.out{opacity:0;translate:-50% 14px;transition:.45s var(--ease)}
 @keyframes toastin{from{opacity:0;translate:-50% 24px;scale:.9}}
+
+/* ===== v6: 本格Liquid Glass（変位マップ屈折 + 分光 + スペキュラ） ===== */
+.glass[data-lg]::after{content:"";position:absolute;inset:0;z-index:2;border-radius:inherit;pointer-events:none;background:var(--spec) 0 0/100% 100% no-repeat}
+.lens{transform:scale(var(--sx,1),var(--sy,1))}
+.lr{position:absolute;inset:0}
+.lens .lc{transform:scale(1.1)}
+.lspec{position:absolute;inset:0;z-index:3;background-size:100% 100%;background-repeat:no-repeat;pointer-events:none}
+.lens::before{opacity:.55}
+.lens::after{box-shadow:inset 0 0 0 1px rgba(255,255,255,.18),inset 0 0 22px rgba(255,255,255,.08)}
+
+/* ===== v7: レンズの背景屈折 / スイッチ・スライダー（lipノブ） ===== */
+.lens{position:fixed;z-index:50;top:calc(var(--by) - var(--bleed,0px));left:calc(var(--bx) + var(--lx,0px) - var(--bsl,0px));width:var(--lw,90px);height:var(--lh,60px);
+ font-size:17px;font-weight:600;color:rgba(255,255,255,.96)}
+.lens.on{opacity:1;scale:1.02}
+.lens button{display:flex;align-items:center;flex:none;padding:11px 24px;font:inherit;color:inherit;white-space:nowrap}
+.lens [aria-current]{color:var(--accent)}
+.lens .ic{width:1.5em;height:1.5em}
+@media (max-width:700px){.lens button{padding:10px 13px;font-size:15px}.lens [data-view=live],.lens [data-view=subs]{display:none}}
+/* レンズの下にある元の文字は隠す（二重表示を防ぎ、背景だけを屈折させる） */
+.lens-hide>button{-webkit-mask-image:linear-gradient(90deg,#000 calc(var(--lx) - var(--bl) + 4px),transparent calc(var(--lx) - var(--bl) + 12px),transparent calc(var(--lx) + var(--lw) - var(--bl) - 12px),#000 calc(var(--lx) + var(--lw) - var(--bl) - 4px));
+ mask-image:linear-gradient(90deg,#000 calc(var(--lx) - var(--bl) + 4px),transparent calc(var(--lx) - var(--bl) + 12px),transparent calc(var(--lx) + var(--lw) - var(--bl) - 12px),#000 calc(var(--lx) + var(--lw) - var(--bl) - 4px))}
+.glass[data-lg]::after,.lspec{opacity:var(--specA,.9)}
+/* スイッチ / スライダー */
+#setup{max-height:88svh;overflow:auto}
+.sets{margin-top:14px}
+.row-sw,.row-sl{display:flex;align-items:center;gap:14px;margin-top:12px;font-size:15px}
+.row-sw>span,.row-sl>span{flex:1;min-width:0}
+.row-sl .sl{flex:1.5}
+.row-sl output{width:46px;text-align:right;font-variant-numeric:tabular-nums;font-size:14px;color:var(--fg2)}
+.knob{display:block}
+.knob.glass{background:linear-gradient(rgba(255,255,255,.55),rgba(255,255,255,.28))}
+.swt{position:relative;flex:none;width:66px;height:30px;border-radius:99px;background:rgba(120,120,128,.42);transition:background .4s var(--ease)}
+.swt[aria-checked=true]{background:#30d158}
+.swt .knob{position:absolute;top:50%;left:-2px;width:50px;height:36px;translate:0 -50%;border-radius:99px;transition:left .5s var(--spring2),scale .4s var(--spring)}
+.swt[aria-checked=true] .knob{left:calc(100% - 48px)}
+.swt:active .knob{scale:1.2 1.16}
+.sl{position:relative;height:40px;touch-action:none;cursor:pointer;-webkit-user-select:none;user-select:none}
+.sl-t{position:absolute;left:0;right:0;top:50%;height:6px;translate:0 -50%;border-radius:9px;background:rgba(120,120,128,.42);overflow:hidden}
+.sl-f{display:block;height:100%;width:calc(var(--p,0)*100%);background:var(--accent)}
+.sl-k{position:absolute;top:50%;left:calc(var(--p,0)*(100% - 46px));width:46px;height:30px;translate:0 -50%;border-radius:99px;transition:scale .4s var(--spring2)}
+.sl.press .sl-k{scale:1.3 1.22}
+
+/* ===== v8: 設定画面（iPadの設定アプリ風） ===== */
+.glass{background:linear-gradient(180deg,rgba(255,255,255,calc(.22 - .06*var(--tint,.25))),rgba(255,255,255,.06)),rgba(58,58,62,calc(.12 + .6*var(--tint,.25)))}
+html.bold{font-weight:600}
+html.rm *,html.rm *::before,html.rm *::after{animation:none!important;transition-duration:.01ms!important}
+.sv{position:fixed;inset:0;z-index:150;background:#000;display:none;overflow:hidden}
+.sv.on{display:block;animation:pop .5s var(--ease)}
+.sv-nav{position:absolute;z-index:5;top:0;left:0;right:0;height:calc(env(safe-area-inset-top,0px) + 88px);display:grid;place-items:end center;padding-bottom:22px;background:linear-gradient(#000 58%,transparent);pointer-events:none}
+.sv-title{font-size:17px;font-weight:700}
+.sv-nav .back{position:absolute;left:18px;bottom:8px;width:52px;height:52px;border-radius:50%;display:grid;place-items:center;pointer-events:auto}
+.sv-nav .back.x .ic{rotate:45deg}
+.stk{position:absolute;inset:0}
+.sp{position:absolute;inset:0;overflow-y:auto;background:#000;padding:calc(env(safe-area-inset-top,0px) + 96px) 0 calc(env(safe-area-inset-bottom,0px) + 60px)}
+.sp-in{max-width:780px;margin:0 auto;padding:0 24px}
+.grp{background:#1c1c1e;border-radius:26px;overflow:hidden}
+.rw{position:relative;display:flex;align-items:center;gap:12px;width:100%;min-height:56px;padding:0 24px;font-size:17px;text-align:left;color:#fff;text-decoration:none;transition:background .25s}
+button.rw:active,a.rw:active{background:rgba(255,255,255,.09)}
+.rw+.rw::before{content:"";position:absolute;top:0;left:24px;right:0;height:.5px;background:rgba(255,255,255,.14)}
+.rw>span{flex:1;min-width:0}
+.rw em{font-style:normal;color:#8e8e93}
+.rw .ic{width:1.15em;height:1.15em;color:var(--accent)}
+.rw .chv{width:.8em;height:.8em;color:#636366}
+.rw.red{color:#ff453a}
+.rw.lnk{color:var(--accent)}
+.dot{display:block;width:22px;height:22px;border-radius:50%;flex:none}
+.ft{padding:10px 26px 26px;font-size:13px;line-height:1.5;color:#8e8e93}
+.hd{padding:14px 26px 8px;font-size:16px;font-weight:600;color:#8e8e93}
+.fld input{flex:2;min-width:0;background:none;border:0;outline:0;color:#fff;font:inherit;text-align:right}
+/* スイッチ（iOS 26風：白いノブ、押すとガラスに） */
+.sp .swt{width:64px;height:30px;background:rgba(120,120,128,.4)}
+.sp .swt[aria-checked=true]{background:#30d158}
+.sp .swt .knob{left:0;width:44px;height:30px;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.35);transition:left .5s var(--spring2),scale .4s var(--spring),background .3s}
+.sp .swt[aria-checked=true] .knob{left:calc(100% - 44px)}
+.sp .swt:active .knob{scale:1.2 1.15;background:rgba(255,255,255,.28)}
+.sp .swt .knob::after{opacity:0!important;transition:opacity .3s}
+.sp .swt:active .knob::after{opacity:var(--specA,.9)!important}
+.sp .swt::after{content:"";position:absolute;right:11px;top:50%;width:10px;height:10px;border:2px solid rgba(255,255,255,.55);border-radius:50%;translate:0 -50%;transition:.3s}
+.sp .swt[aria-checked=true]::after{right:auto;left:15px;width:2px;height:12px;border:0;border-radius:1px;background:#fff}
+/* Liquid Glass プレビュー */
+.pvc{max-width:640px;margin:4px auto 0;border-radius:40px;overflow:hidden;background:#1c1c1e}
+.pvs{position:relative;height:210px;display:flex;justify-content:center;align-items:flex-start;gap:12px;padding-top:22px;
+ background:radial-gradient(120% 70% at 20% 0,#cfe8ff 0,#6aaee8 38%,transparent 62%),repeating-linear-gradient(115deg,transparent 0 24px,rgba(255,255,255,.4) 24px 32px),linear-gradient(180deg,#8cc4f5,#4f8f5a 62%,#244d33)}
+.pv.round{width:54px;height:54px;border-radius:50%;display:grid;place-items:center;flex:none}
+.pv.pill{display:flex;align-items:center;gap:10px;width:min(300px,60%);height:54px;border-radius:999px;padding:0 18px;color:rgba(255,255,255,.8);font-size:17px}
+.pv u{text-decoration:none}
+.pvt{padding:22px 26px 26px}
+.pvt h3{font-size:26px;font-weight:800}
+.pvt h4{font-size:20px;font-weight:700;color:#6e6e73;margin:2px 0 10px}
+.pvt p{font-size:15px;color:#d1d1d6}
+.sl-wide{display:flex;align-items:center;gap:14px;height:68px;margin-top:22px;padding:0 24px;border-radius:999px;background:#1c1c1e}
+.sl-wide>.ic{width:1.5em;height:1.5em;color:rgba(255,255,255,.7);flex:none}
+.sl-wide .sl{flex:1}
+.sl-wide .sl::after{content:"";position:absolute;left:0;right:0;bottom:2px;height:4px;pointer-events:none;
+ background:radial-gradient(circle,rgba(255,255,255,.4) 2px,transparent 2.5px) 0 0/6px 4px no-repeat,radial-gradient(circle,rgba(255,255,255,.4) 2px,transparent 2.5px) 50% 0/6px 4px no-repeat,radial-gradient(circle,rgba(255,255,255,.4) 2px,transparent 2.5px) 100% 0/6px 4px no-repeat}
+.grp .rw .sl{flex:1.3}
+.grp .rw output{width:46px;text-align:right;font-size:14px;color:#8e8e93}
+/* ナビゲーションの選択（プレビュー付きラジオ） */
+.pkr{display:flex;justify-content:space-around;gap:12px;padding:26px 12px 22px}
+.pk{display:flex;flex-direction:column;align-items:center;gap:12px;font-size:16px}
+.pv-mock{position:relative;width:min(270px,38vw);aspect-ratio:16/10;border-radius:18px;overflow:hidden;background:linear-gradient(135deg,#1d4ed8,#0e7490 60%,#34d399)}
+.pv-mock b{position:absolute;display:block;background:rgba(255,255,255,.32);border-radius:8px}
+.m-nav{left:22%;right:22%;top:8%;height:11%;border-radius:99px!important}
+.m-hero{left:10%;right:10%;top:28%;height:30%}
+.m-row{left:10%;right:10%;top:66%;height:22%}
+.pv-mock.side .m-hero,.pv-mock.side .m-row{left:34%;right:6%}
+.m-side{left:4%;top:6%;bottom:6%;width:24%}
+.rd{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;border:2px solid #636366;transition:.3s var(--spring)}
+.rd.on{background:var(--accent);border-color:var(--accent)}
+.rd .ic{width:.9em;height:.9em;color:#fff}

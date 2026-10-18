@@ -41,6 +41,9 @@
  <symbol id="i-live" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 7.8a5.9 5.9 0 0 1 0 8.4M4.8 4.8a10.1 10.1 0 0 0 0 14.400M19.2 4.8a10.1 10.1 0 0 1 0 14.4"/></g><circle cx="12" cy="12" r="2.3" fill="currentColor"/></symbol>
   <symbol id="i-subs" viewBox="0 0 24 24"><g fill="currentColor"><circle cx="9" cy="8" r="3.5"/><path d="M2.6 19.500a6.4 6.4 0 0 1 12.8 0z"/><g opacity=".7"><circle cx="17.2" cy="9" r="2.7"/><path d="M16.8 19.500a5.2 5.2 0 0 1 4.6-5.200c.5 0 .9.3.9.800v4.400z"/></g></g></symbol>
   <symbol id="i-queue" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.500h11M4 11.500h11M4 16.500h6"/><path d="m16.5 14.5 4.5 2.8-4.5 2.800z" fill="currentColor"/></g></symbol>
+ <symbol id="i-menu" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 7h16M7 12h10M10 17h4"/></symbol>
+  <symbol id="i-clear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><rect x="3" y="3.5" width="12.5" height="12.5" rx="3.5"/><rect x="8.5" y="8.5" width="12.5" height="12.5" rx="3.5"/></g></symbol>
+  <symbol id="i-tint" viewBox="0 0 24 24"><rect x="3" y="3.5" width="12.5" height="12.5" rx="3.5" fill="currentColor" opacity=".55"/><rect x="8.5" y="8.5" width="12.5" height="12.5" rx="3.5" fill="currentColor"/></symbol>
  </defs>
 </svg>
 
@@ -66,7 +69,7 @@
  <button data-view="lib"><svg class="ic"><use href="#i-library"/></svg>ライブラリ</button>
  <div id="sideCh"></div>
  <hr>
- <button data-act="setup"><svg class="ic"><use href="#i-gear"/></svg>APIキー設定</button>
+ <button data-act="setup"><svg class="ic"><use href="#i-gear"/></svg>設定</button>
 </aside>
 
 <main id="main"></main>
@@ -90,18 +93,10 @@
  </div>
 </section>
 
-<dialog id="setup" class="sheet">
- <form method="dialog">
-  <h2>YouTube APIキー</h2>
-  <p>YouTube Data API v3 のキーを入力してください。キーはこの端末のブラウザ内にだけ保存されます。</p>
-  <input id="key" type="password" autocomplete="off" placeholder="AIza…">
-  <select id="region" aria-label="地域"><option value="JP">地域：日本</option><option value="US">地域：アメリカ</option><option value="KR">地域：韓国</option><option value="GB">地域：イギリス</option><option value="TW">地域：台湾</option></select>
-  <select id="accent" aria-label="アクセントカラー"><option value="#41a0ff">アクセント：ブルー</option><option value="#ff5c8a">アクセント：ピンク</option><option value="#30d158">アクセント：グリーン</option><option value="#ff9f0a">アクセント：オレンジ</option><option value="#bf7bff">アクセント：パープル</option></select>
-  <button type="button" class="btn-sub" data-act="clear" style="margin-top:12px">視聴履歴を消去</button>
-  <p class="hint">Google Cloud Consoleでキーを作成し、HTTPリファラー制限にこのサイトのURLを設定すると安全です。</p>
-  <div class="acts"><button value="cancel" class="btn-sub">キャンセル</button><button value="ok" class="btn-play">保存</button></div>
- </form>
-</dialog>
+<section id="settings" class="sv" aria-label="設定">
+ <div class="sv-nav"><button class="back glass" data-back aria-label="戻る"><svg class="ic"><use href="#i-chev"/></svg></button><h1 class="sv-title">設定</h1></div>
+ <div class="stk"></div>
+</section>
 <dialog id="detail" class="sheet"></dialog>
 <script type="module" src="app.js"></script>
 </body>

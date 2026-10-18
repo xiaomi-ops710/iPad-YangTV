@@ -196,7 +196,7 @@ const VIEWS={
     main.append(seg([['new','最新'],['pop','人気']],'new',load,'smode'),list);load('new');
   }
 };
-const notice=(t,p,btn)=>h(`<div class="empty"><h1>${t}</h1><p>${esc(p)}</p>${btn?`<button class="btn-play" data-act="setup">${btn}</button>`:''}</div>`);
+const notice=(t,p,btn)=>h(`<div class="empty"><h1>${t}</h1><p>${esc(p)}</p>${btn?`<button class="btn-play" data-act="setup" data-page="key">${btn}</button>`:''}</div>`);
 async function render(view,arg,back){
   const my=++token;
   if(!back&&state.ready&&(view!==state.view||arg!==state.arg))state.stack=[...state.stack,[state.view,state.arg]].slice(-20);
@@ -293,6 +293,7 @@ const Player={
     $('.rd',box).append(...list.map(x=>{const c=card(reg(x),0);c.classList.add('rl');return c}));
   },
   async comments(v){
+    if(!Store.get('cm',true))return;
     try{
       const j=await API.call('commentThreads',{part:'snippet',videoId:v.id,maxResults:20,order:'relevance',textFormat:'plainText'});
       if(this.v!==v||!j.items.length)return;
@@ -351,7 +352,7 @@ const Player={
     el.style.transition='translate .5s cubic-bezier(.3,1.4,.5,1),opacity .3s';el.style.translate='';el.style.opacity='';setTimeout(()=>el.style.transition='',520)})})();
 
 /* ---------- Events ---------- */
-const dlg=$('#setup'),det=$('#detail');
+const det=$('#detail');
 const slim=v=>({id:v.id,title:v.title,channel:v.channel,cid:v.cid,cat:v.cat,thumb:v.thumb,hi:v.hi,dur:v.dur});
 function toast(t){const e=h(`<div class="toast glass">${esc(t)}</div>`);document.body.append(e);setTimeout(()=>e.classList.add('out'),1700);setTimeout(()=>e.remove(),2200)}
 document.addEventListener('click',e=>{
@@ -369,14 +370,12 @@ document.addEventListener('click',e=>{
     mini:()=>Player.mini(),expand:()=>Player.expand(),pp:()=>Player.toggle(),full:()=>Player.full(),rate:()=>Player.nextRate(),sleep:()=>Player.nextSleep(),
     loop:()=>{Player.loop=!Player.loop;Player.acts()},auto:()=>{Player.auto=!Player.auto;Store.set('auto',Player.auto);Player.acts()},
     wladd:()=>{Lib.toggle(v);Player.acts();syncAdd();toast(Lib.has(v.id)?'ウォッチリストに追加しました':'ウォッチリストから削除しました')},desc:()=>a.classList.toggle('open'),
-    setup:()=>{$('#key').value=Store.get('key','');$('#region').value=region();$('#accent').value=Store.get('accent','#41a0ff');closeSide();dlg.showModal()}})[a.dataset.act]?.();
+    setup:()=>{closeSide();Settings.open(a.dataset.page)}})[a.dataset.act]?.();
 });
 document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&Settings.on)return Settings.pop();
   if(e.key==='Escape'&&Player.v&&!Player.isMini)Player.mini();
   if(e.key==='Enter'&&e.target.matches('.card'))Player.open(VID.get(e.target.dataset.id));
-});
-dlg.addEventListener('close',()=>{
-  if(dlg.returnValue==='ok'){Store.set('key',$('#key').value.trim());Store.set('region',$('#region').value);Store.set('accent',$('#accent').value);document.documentElement.style.setProperty('--accent',$('#accent').value);API.cache.clear();render(state.view,state.arg)}
 });
 /* tvOS風チルト */
 document.addEventListener('pointermove',e=>{
@@ -388,22 +387,242 @@ document.addEventListener('pointermove',e=>{
 document.addEventListener('pointerout',e=>{const c=e.target.closest?.('.card');if(c){c.style.removeProperty('--rx');c.style.removeProperty('--ry')}});
 addEventListener('resize',()=>markNav(state.view));
 
+/* ---------- Liquid Glass：Snellの法則による屈折 + SVG変位マップ（kube.io の手法） ---------- */
+const NS='http://www.w3.org/2000/svg',XL='http://www.w3.org/1999/xlink';
+const LG={
+  enabled:Store.get('lg','1')==='1',n:0,panels:[],defs:null,strength:Store.get('lgstr',1),
+  chromium:!!navigator.userAgentData?.brands?.some(b=>/Chromium/.test(b.brand)),   // backdrop-filter:url() が使えるのはChromiumのみ
+  el(tag,a={}){const e=document.createElementNS(NS,tag);for(const k in a)e.setAttribute(k,a[k]);return e},
+  start(){
+    if(!this.enabled)return;
+    const s=this.el('svg',{width:0,height:0,'aria-hidden':'true'});s.style.cssText='position:absolute;width:0;height:0;pointer-events:none';
+    this.defs=this.el('defs');s.append(this.defs);document.body.prepend(s);this.scan();
+    let t;new MutationObserver(m=>{if(m.every(x=>this.defs.contains(x.target)))return;clearTimeout(t);t=setTimeout(()=>this.scan(),250)})
+      .observe(document.body,{childList:true,subtree:true});
+  },
+  /* 凸スクワークル面 y=(1-(1-x)^4)^(1/4) の高さ→入射角→屈折角→横方向のずれ(px) */
+  profile(bezel,thick,N=128,n=1.5,shape){
+    const cv=x=>Math.pow(1-Math.pow(1-x,4),.25),sm=x=>x*x*x*(x*(x*6-15)+10);
+    /* lip = mix(Convex, Concave, Smootherstep): 縁は凸（内向き屈折）、中央は凹（外向き） */
+    const f=shape==='lip'?x=>{const s=sm(x);return cv(x)*(1-s)+(1-cv(x))*s}:cv,out=new Float32Array(N),dl=.001;
+    for(let i=0;i<N;i++){
+      const x=(i+.5)/N,slope=(f(Math.min(1,x+dl))-f(Math.max(0,x-dl)))/(2*dl)*(thick/bezel);
+      const t1=Math.atan(slope),t2=Math.asin(Math.sin(t1)/n);
+      out[i]=thick*f(x)*Math.tan(t1-t2);
+    }
+    return out;
+  },
+  /* 変位マップ(R=x,G=y, 128=無変位) と スペキュラ(縁のハイライト)を同時に生成 */
+  maps(w,h,r,bezel,thick,rim=2.4,shape){
+    const N=128,mags=this.profile(bezel,thick,N,1.5,shape),max=Math.max(...mags.map(Math.abs))||1;
+    const mk=()=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c.getContext('2d')};
+    const cm=mk(),cs=mk(),dm=cm.createImageData(w,h),ds=cs.createImageData(w,h),A=dm.data,B=ds.data;
+    const hw=w/2,hh=h/2,la=-Math.PI/3,lx=Math.cos(la),ly=Math.sin(la);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+      const px=x+.5-hw,py=y+.5-hh,qx=Math.abs(px)-(hw-r),qy=Math.abs(py)-(hh-r),sx=px<0?-1:1,sy=py<0?-1:1;
+      let sd,nx,ny;
+      if(qx>0&&qy>0){const l=Math.hypot(qx,qy);sd=l-r;nx=sx*qx/l;ny=sy*qy/l}
+      else if(qx>qy){sd=qx-r;nx=sx;ny=0}else{sd=qy-r;nx=0;ny=sy}
+      const d=-sd,i=(y*w+x)*4;let vx=0,vy=0;
+      if(d>=0&&d<bezel){const m=mags[Math.min(N-1,d/bezel*N|0)]/max;vx=-nx*m;vy=-ny*m}   // 内向きにサンプル
+      A[i]=128+vx*127;A[i+1]=128+vy*127;A[i+2]=128;A[i+3]=255;
+      if(d>=0&&d<rim){const a=Math.pow(Math.abs(nx*lx+ny*ly),1.3)*(1-d/rim)*.95;B[i]=B[i+1]=B[i+2]=255;B[i+3]=a*255}
+    }
+    cm.putImageData(dm,0,0);cs.putImageData(ds,0,0);
+    return{map:cm.canvas.toDataURL(),spec:cs.canvas.toDataURL(),max};
+  },
+  /* disp=true: R/G/Bを少しずつ違う強さで変位→分光（色収差） */
+  filter(id,w,h,map,scale,disp){
+    const f=this.el('filter',{id,x:0,y:0,width:w,height:h,filterUnits:'userSpaceOnUse','color-interpolation-filters':'sRGB'});
+    const im=this.el('feImage',{x:0,y:0,width:w,height:h,preserveAspectRatio:'none',result:'m'});
+    im.setAttribute('href',map);im.setAttributeNS(XL,'xlink:href',map);f.append(im);
+    const dm=(s,res)=>this.el('feDisplacementMap',{in:'SourceGraphic',in2:'m',scale:s,xChannelSelector:'R',yChannelSelector:'G',...(res?{result:res}:{})});
+    if(!disp)f.append(dm(scale));
+    else{
+      const mat=i=>{const a=Array(20).fill(0);a[i*6]=1;a[18]=1;return a.join(' ')},k=[.94,1,1.07];
+      'RGB'.split('').forEach((c,i)=>f.append(dm(scale*k[i],'d'+c),this.el('feColorMatrix',{in:'d'+c,type:'matrix',values:mat(i),result:'c'+c})));
+      f.append(this.el('feBlend',{in:'cR',in2:'cG',mode:'screen',result:'rg'}),this.el('feBlend',{in:'rg',in2:'cB',mode:'screen'}));
+    }
+    this.defs.append(f);return f;
+  },
+  lens(w,h){
+    const m=this.maps(w,h,h/2,h*.42,h*.9,2.6),id='lgl'+(++this.n),k=m.max*2*.85*this.strength;
+    this.filter(id,w,h,m.map,k,true);                                     // レンズ内の文字: 分光つき屈折
+    let bid='';if(this.chromium){bid='lgb'+(++this.n);this.filter(bid,w,h,m.map,k,false)}   // 背景そのものの屈折(Chromium)
+    return{id,bid,spec:m.spec};
+  },
+  setStrength(x){this.strength=x;this.panels.forEach(p=>p.dm&&p.dm.setAttribute('scale',p.base*x))},
+  drop(id){$('#'+id,this.defs)?.remove()},
+  attach(el){
+    if(el.dataset.lg)return;el.dataset.lg=1;
+    const id='lgp'+(++this.n),rec={el,id};this.panels.push(rec);
+    if(getComputedStyle(el).position==='static')el.style.position='relative';
+    const upd=()=>{
+      const w=el.offsetWidth,h=el.offsetHeight;if(w<8||h<8)return;
+      const r=Math.min(parseFloat(getComputedStyle(el).borderTopLeftRadius)||0,w/2,h/2),bezel=Math.min(Math.min(w,h)/2,Math.max(r*.9,12));
+      const m=this.maps(w,h,r,bezel,bezel*1.5,2.2,el.dataset.shape);el.style.setProperty('--spec',`url(${m.spec})`);
+      if(this.chromium){this.drop(id);rec.base=m.max*2*.7;rec.dm=this.filter(id,w,h,m.map,rec.base*this.strength,false).querySelector('feDisplacementMap');
+        el.style.backdropFilter=el.style.webkitBackdropFilter=`blur(6px) url(#${id}) saturate(1.8) brightness(1.08)`}
+    };
+    rec.ro=new ResizeObserver(()=>{clearTimeout(rec.t);rec.t=setTimeout(upd,120)});rec.ro.observe(el);upd();
+  },
+  scan(){
+    if(!this.defs)return;
+    $$('.nav,.seg,.side,.sbar,.btn-add,.x,.knob,.pv,.sl-wide,.back').forEach(e=>this.attach(e));
+    this.panels=this.panels.filter(p=>{if(p.el.isConnected)return true;p.ro.disconnect();this.drop(p.id);return false});
+  }
+};
+/* ---------- UI部品：スイッチ / スライダー（ガラスのノブ） ---------- */
+const SWS={
+  auto:{get:()=>Player.auto,set:v=>{Player.auto=v;Store.set('auto',v);Player.acts()}},
+  cm:{get:()=>Store.get('cm',true),set:v=>Store.set('cm',v)},
+  lg:{get:()=>Store.get('lg','1')==='1',set:v=>{Store.set('lg',v?'1':'0');toast('ガラス品質は再読み込み後に反映されます')}}
+};
+SWS.bold={get:()=>Store.get('bold',false),set:v=>{Store.set('bold',v);applyPrefs()}};
+SWS.rm={get:()=>Store.get('rm',false),set:v=>{Store.set('rm',v);applyPrefs()}};
+const syncSw=()=>$$('[data-sw]').forEach(b=>b.setAttribute('aria-checked',SWS[b.dataset.sw].get()));
+document.addEventListener('click',e=>{const b=e.target.closest('[data-sw]');if(!b)return;const s=SWS[b.dataset.sw];s.set(!s.get());syncSw()});
+function initSl(el){
+  const k=el.dataset.sl,min=+el.dataset.min,max=+el.dataset.max,step=+el.dataset.step,out=el.parentElement.querySelector('output');
+  const set=(x,save)=>{x=Math.min(max,Math.max(min,Math.round(x/step)*step));el.style.setProperty('--p',(x-min)/(max-min));if(out)out.textContent=Math.round(x*100)+'%';
+    if(save)Store.set(k,x);if(k==='lgstr')LG.setStrength(x);if(k==='lgspec')document.documentElement.style.setProperty('--specA',x);if(k==='tint')document.documentElement.style.setProperty('--tint',x)};
+  const at=e=>{const r=$('.sl-t',el).getBoundingClientRect();return min+(max-min)*Math.min(1,Math.max(0,(e.clientX-r.left)/r.width))};
+  el.addEventListener('pointerdown',e=>{el.setPointerCapture(e.pointerId);el.classList.add('press');set(at(e),true)});
+  el.addEventListener('pointermove',e=>{if(el.classList.contains('press'))set(at(e),true)});
+  ['pointerup','pointercancel'].forEach(t=>el.addEventListener(t,()=>el.classList.remove('press')));
+  set(Store.get(k,+el.dataset.def));
+}
+/* ---------- 設定画面（iPadの設定アプリ風：グループ化リスト / プッシュ遷移） ---------- */
+const REGIONS=[['JP','日本'],['US','アメリカ'],['KR','韓国'],['GB','イギリス'],['TW','台湾']];
+const ACCENTS=[['#41a0ff','ブルー'],['#ff5c8a','ピンク'],['#30d158','グリーン'],['#ff9f0a','オレンジ'],['#bf7bff','パープル']];
+const TINTS=['クリア','よりクリア','標準','やや色合い','色合い調整'];
+const swt=k=>`<button type="button" class="swt" role="switch" data-sw="${k}"><i class="knob glass" data-shape="lip"></i></button>`;
+const slr=(k,min,max,step,def,label)=>`<div class="rw"><span>${label}</span><div class="sl" data-sl="${k}" data-min="${min}" data-max="${max}" data-step="${step}" data-def="${def}"><i class="sl-t"><b class="sl-f"></b></i><i class="sl-k knob glass"></i></div><output></output></div>`;
+const chv='<svg class="ic chv"><use href="#i-chev"/></svg>';
+function applyPrefs(){
+  const r=document.documentElement;
+  r.style.setProperty('--accent',Store.get('accent','#41a0ff'));r.style.setProperty('--tint',Store.get('tint',.25));r.style.setProperty('--specA',Store.get('lgspec',.9));
+  r.classList.toggle('bold',!!Store.get('bold',false));r.classList.toggle('rm',!!Store.get('rm',false));
+}
+const SET={
+  root:()=>({title:'設定',html:`
+    <div class="grp">
+      <button class="rw" data-go="key"><span>APIキー</span><em>${Store.get('key','')?'設定済み':'未設定'}</em>${chv}</button>
+      <button class="rw" data-go="region"><span>地域</span><em>${REGIONS.find(r=>r[0]===region())[1]}</em>${chv}</button>
+    </div>
+    <p class="ft">YouTube Data API v3 のキーは、この端末のブラウザ内にだけ保存されます。</p>
+    <div class="grp">
+      <button class="rw" data-go="liquid"><span>Liquid Glass</span><em>${TINTS[Math.round(Store.get('tint',.25)*4)]}</em>${chv}</button>
+      <button class="rw" data-go="accent"><span>アクセントカラー</span><i class="dot" style="background:${Store.get('accent','#41a0ff')}"></i>${chv}</button>
+      <button class="rw" data-go="nav"><span>ナビゲーション</span><em>${Store.get('layout','tab')==='side'?'サイドバー':'タブバー'}</em>${chv}</button>
+    </div>
+    <p class="ft">Liquid Glassは、背後の映像に合わせて見え方が変わります。</p>
+    <p class="hd">再生</p>
+    <div class="grp"><div class="rw"><span>自動再生</span>${swt('auto')}</div><div class="rw"><span>コメントを表示</span>${swt('cm')}</div></div>
+    <p class="ft">自動再生をオンにすると、動画の終了後にキュー、またはおすすめの動画へ進みます。</p>
+    <p class="hd">アクセシビリティオプション</p>
+    <div class="grp"><div class="rw"><span>文字を太くする</span>${swt('bold')}</div><div class="rw"><span>視差効果を減らす</span>${swt('rm')}</div></div>
+    <p class="ft">視差効果を減らすと、画面の動きやアニメーションが最小限になります。</p>
+    <p class="hd">データ</p>
+    <div class="grp">
+      <button class="rw red" data-do="hist"><span>視聴履歴を消去</span></button>
+      <button class="rw red" data-do="recent"><span>検索履歴を消去</span></button>
+      <button class="rw red" data-do="queue"><span>キューを空にする</span></button>
+    </div>`}),
+  key:()=>({title:'APIキー',html:`
+    <div class="grp"><label class="rw fld"><span>キー</span><input id="sk" type="password" autocomplete="off" placeholder="AIza…" value="${esc(Store.get('key',''))}"></label></div>
+    <p class="ft">Google Cloud Consoleでキーを作成し、HTTPリファラー制限にこのサイトのURLを設定すると安全です。</p>
+    <div class="grp"><a class="rw lnk" href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener"><span>APIキーを取得する…</span></a></div>`}),
+  region:()=>({title:'地域',html:`
+    <div class="grp">${REGIONS.map(([c,n])=>`<button class="rw" data-opt="region:${c}"><span>${n}</span>${region()===c?icon('check'):''}</button>`).join('')}</div>
+    <p class="ft">話題の動画やライブの取得に使う地域です。</p>`}),
+  accent:()=>({title:'アクセントカラー',html:`
+    <div class="grp">${ACCENTS.map(([c,n])=>`<button class="rw" data-opt="accent:${c}"><i class="dot" style="background:${c}"></i><span>${n}</span>${Store.get('accent','#41a0ff')===c?icon('check'):''}</button>`).join('')}</div>`}),
+  nav:()=>{
+    const cur=Store.get('layout','tab'),card=(k,t,m)=>`<button class="pk" data-opt="layout:${k}"><div class="pv-mock ${k}">${m}</div><span>${t}</span><i class="rd${cur===k?' on':''}">${cur===k?icon('check'):''}</i></button>`;
+    return{title:'ナビゲーション',html:`
+      <div class="grp pkr">${card('tab','タブバー','<b class="m-nav"></b><b class="m-hero"></b><b class="m-row"></b>')}${card('side','サイドバー','<b class="m-side"></b><b class="m-hero"></b><b class="m-row"></b>')}</div>
+      <p class="ft">サイドバーは、画面幅900px以上のiPadで使えます。幅が狭いときは、タブバーで表示されます。</p>`};
+  },
+  liquid:()=>({title:'Liquid Glass',html:`
+    <div class="pvc"><div class="pvs"><b class="pv glass round">${icon('menu')}</b><b class="pv glass pill">${icon('search')}<u>検索</u></b></div>
+      <div class="pvt"><h3>ようこそ</h3><h4>Liquid Glass のプレビュー</h4><p>ガラスの透明度や屈折の強さを変えると、上のボタンの見え方がすぐに変わります。</p></div></div>
+    <div class="sl-wide glass">${icon('clear')}<div class="sl" data-sl="tint" data-min="0" data-max="1" data-step="0.25" data-def="0.25"><i class="sl-t"><b class="sl-f"></b></i><i class="sl-k knob glass"></i></div>${icon('tint')}</div>
+    <p class="ft">「クリア」にすると透明度が高くなり、「色合い調整」にすると不透明度が上がって、文字やボタンのコントラストが強くなります。</p>
+    <div class="grp">${slr('lgstr',0,1.5,.05,1,'屈折の強さ')}${slr('lgspec',0,1.2,.05,.9,'ハイライト')}<div class="rw"><span>高品質ガラス（屈折）</span>${swt('lg')}</div></div>
+    <p class="ft">屈折の強さは、Chromium系のブラウザでは背後の映像にも反映されます。高品質ガラスの切り替えは、再読み込み後に反映されます。</p>`})
+};
+const Settings={
+  el:$('#settings'),stack:[],dirty:false,
+  get on(){return this.el.classList.contains('on')},
+  build(n){const p=SET[n](),el=h(`<div class="sp" data-p="${n}"><div class="sp-in">${p.html}</div></div>`);el.dataset.title=p.title;this.bind(el);return el},
+  bind(el){$$('[data-sl]',el).forEach(initSl);syncSw();LG.scan()},
+  head(el){$('.sv-title',this.el).textContent=el.dataset.title;$('.back',this.el).classList.toggle('x',this.stack.length<2)},
+  open(page){
+    this.stack=[];$('.stk',this.el).replaceChildren();this.el.classList.add('on');document.body.classList.add('lock');
+    this.push('root',true);if(page&&page!=='root')this.push(page);
+  },
+  push(n,first){
+    const el=this.build(n),prev=this.stack.at(-1),ease='cubic-bezier(.3,1,.4,1)';
+    this.stack.push(el);$('.stk',this.el).append(el);this.head(el);
+    if(first)return;
+    prev.animate([{transform:'none',opacity:1},{transform:'translateX(-28%)',opacity:.4}],{duration:480,easing:ease,fill:'forwards'});
+    el.animate([{transform:'translateX(100%)'},{transform:'none'}],{duration:480,easing:ease});
+  },
+  pop(){
+    if(this.stack.length<2)return this.close();
+    const el=this.stack.pop(),prev=this.stack.at(-1),ease='cubic-bezier(.3,1,.4,1)';
+    prev.getAnimations().forEach(a=>a.cancel());this.refresh(prev);this.head(prev);
+    prev.animate([{transform:'translateX(-28%)',opacity:.4},{transform:'none',opacity:1}],{duration:440,easing:ease});
+    el.animate([{transform:'none'},{transform:'translateX(100%)'}],{duration:440,easing:ease}).onfinish=()=>el.remove();
+  },
+  refresh(el){el=el||this.stack.at(-1);$('.sp-in',el).innerHTML=SET[el.dataset.p]().html;this.bind(el)},
+  close(){
+    this.el.classList.remove('on');if(!Player.v||Player.isMini)document.body.classList.remove('lock');
+    if(this.dirty){this.dirty=false;API.cache.clear();render(state.view,state.arg)}
+  }
+};
+Settings.el.addEventListener('click',e=>{
+  const t=e.target,g=t.closest('[data-go]'),b=t.closest('[data-back]'),o=t.closest('[data-opt]'),d=t.closest('[data-do]');
+  if(g)return Settings.push(g.dataset.go);
+  if(b)return Settings.pop();
+  if(o){
+    const[k,v]=o.dataset.opt.split(':');
+    if(k==='region'){Store.set('region',v);Settings.dirty=true}
+    if(k==='accent'){Store.set('accent',v);applyPrefs()}
+    if(k==='layout'){Store.set('layout',v);applyLayout()}
+    return Settings.refresh();
+  }
+  if(d){
+    const k=d.dataset.do;Store.set(k==='recent'?'recent':k,[]);
+    toast({hist:'視聴履歴を消去しました',recent:'検索履歴を消去しました',queue:'キューを空にしました'}[k]);
+  }
+});
+Settings.el.addEventListener('input',e=>{if(e.target.id==='sk'){Store.set('key',e.target.value.trim());API.cache.clear();Settings.dirty=true}});
 /* ---------- Liquid Glass レンズ: 選択中タブを長押し→ドラッグで移動 ---------- */
 const Lens=(()=>{
   let S=null,raf=0,block=false;
   const cx=b=>b.offsetLeft+b.offsetWidth/2;
   const tabsOf=bar=>$$('button[data-view],button[data-k]',bar).filter(b=>b.offsetParent);
-  const paint=()=>{const w=S.base+Math.min(Math.abs(S.v)*.05,28);   // 速いほど横に伸びる
-    S.lens.style.setProperty('--lw',w+'px');S.lens.style.setProperty('--lx',(S.x-w/2)+'px')};
+  const paint=()=>{const st=Math.min(Math.abs(S.v)*.0004,.12),l=S.lens.style;   // 速いほど伸びる（ぷるん）
+    const lx=(S.x-S.base/2)+'px';l.setProperty('--lx',lx);S.bar.style.setProperty('--lx',lx);l.setProperty('--sx',1+st);l.setProperty('--sy',1-st*.6)};
   function activate(){
     const{bar,btn}=S,r=bar.getBoundingClientRect(),tabs=tabsOf(bar);
     Object.assign(S,{on:true,tabs,min:cx(tabs[0]),max:cx(tabs[tabs.length-1]),base:Math.max(btn.offsetWidth+30,88),x:cx(btn),v:0});
     S.target=S.x;S.off=S.x-(S.sx-r.left+bar.scrollLeft);
     const html=[...bar.children].filter(c=>c.tagName==='BUTTON').map(b=>b.outerHTML).join('');
-    const lens=h(`<div class="lens" aria-hidden="true">${['a','b'].map(k=>`<div class="lw ${k}"><div class="lc">${html}</div></div>`).join('')}</div>`);
+    const bleed=parseFloat(getComputedStyle(bar).getPropertyValue('--bleed'))||0,
+      L=LG.enabled?LG.lens(S.base,bar.clientHeight+2*bleed):{id:'',spec:''};
+    S.fid=L.id;S.bid=L.bid;
+    const lens=h(`<div class="lens" aria-hidden="true"><div class="lr"${L.id?` style="filter:url(#${L.id})"`:''}><div class="lc">${html}</div></div>${L.spec?`<div class="lspec" style="background-image:url(${L.spec})"></div>`:''}</div>`);
+    lens.style.setProperty('--lw',S.base+'px');
     lens.style.setProperty('--bw',bar.scrollWidth+'px');lens.style.setProperty('--bh',bar.clientHeight+'px');
-    S.lens=lens;bar.append(lens);paint();
-    requestAnimationFrame(()=>bar.classList.add('lens-on'));
+    const ls=lens.style;ls.setProperty('--bx',r.left+'px');ls.setProperty('--by',r.top+'px');ls.setProperty('--bsl',bar.scrollLeft+'px');
+    ls.setProperty('--bleed',bleed+'px');ls.setProperty('--lh',(bar.clientHeight+2*bleed)+'px');
+    if(L.bid)ls.backdropFilter=ls.webkitBackdropFilter=`blur(1px) url(#${L.bid}) saturate(1.7) brightness(1.2)`;
+    bar.style.setProperty('--lw',S.base+'px');[...bar.children].forEach(c=>c.tagName==='BUTTON'&&c.style.setProperty('--bl',c.offsetLeft+'px'));
+    S.lens=lens;document.body.append(lens);paint();
+    requestAnimationFrame(()=>{bar.classList.add('lens-on','lens-hide');lens.classList.add('on')});
     bar.setPointerCapture?.(S.id);navigator.vibrate?.(6);
     S.last=performance.now();raf=requestAnimationFrame(loop);
   }
@@ -415,11 +634,11 @@ const Lens=(()=>{
     raf=requestAnimationFrame(loop);
   }
   function end(){
-    const{bar,lens,x,base}=S;S=null;const i=$('.ind',bar);
+    const{bar,lens,x,base,fid,bid}=S;S=null;const i=$('.ind',bar);
     i.style.transition='none';i.style.left=(x-base/2)+'px';i.style.width=base+'px';i.offsetWidth;i.style.transition='';
-    bar.classList.remove('lens-on');
+    bar.classList.remove('lens-on');lens.classList.remove('on');setTimeout(()=>bar.classList.remove('lens-hide'),340);
     requestAnimationFrame(()=>{mark(bar);i.classList.remove('jelly');i.classList.add('settle');setTimeout(()=>i.classList.remove('settle'),700)});
-    setTimeout(()=>lens.remove(),520);
+    setTimeout(()=>{lens.remove();if(fid)LG.drop(fid);if(bid)LG.drop(bid)},520);
   }
   document.addEventListener('pointerdown',e=>{
     const b=e.target.closest?.('.nav button[aria-current],.seg button[aria-current]');
@@ -446,5 +665,5 @@ const Lens=(()=>{
 })();
 matchMedia('(min-width:900px)').addEventListener('change',applyLayout);
 document.documentElement.style.setProperty('--accent',Store.get('accent','#41a0ff'));
-applyLayout();sideCh();render('home');
+applyPrefs();LG.start();applyLayout();sideCh();render('home');
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
