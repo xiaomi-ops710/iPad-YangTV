@@ -529,3 +529,40 @@ kbd{font:600 14px ui-monospace,SFMono-Regular,Menlo,monospace;padding:4px 10px;b
  .nav.min [aria-current]{background:rgba(0,0,0,.4);border-radius:999px}
  .mutebtn{bottom:24px}
 }
+
+/* ===== v13: 詳細ページ（Apple TVの商品ページ風） / 並べ替え / 検索フィルタ / チャプター ===== */
+.dph{position:relative;display:flex;align-items:flex-end;min-height:min(74svh,660px);padding:calc(var(--top) + 24px) var(--pad) 44px;background:var(--bg) center/cover}
+.dph::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.7),transparent 64%),linear-gradient(0deg,#000 3%,transparent 58%)}
+.dph>*{position:relative}
+.dph>.back{position:absolute;top:var(--top);left:var(--pad);width:46px;height:46px;border-radius:50%;display:grid;place-items:center}
+.dpb{max-width:660px}
+.dpb>*{animation:heroin .8s var(--ease) backwards}
+.dpb>:nth-child(2){animation-delay:.07s}.dpb>:nth-child(3){animation-delay:.14s}.dpb>:nth-child(4){animation-delay:.21s}
+.dpch{display:inline-flex;align-items:center;gap:10px;padding:6px 14px 6px 6px;border-radius:999px;background:rgba(255,255,255,.14);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);font-size:15px;font-weight:600}
+.dpch img{width:30px;height:30px;border-radius:50%;object-fit:cover;background:#333}
+.dpch .chv{width:.8em;height:.8em;opacity:.7}
+.dpb h1{margin-top:16px;font-size:clamp(28px,4.6vw,50px);font-weight:800;line-height:1.1;letter-spacing:-.02em;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.dpm{margin-top:10px;font-size:15px;color:var(--fg2)}
+.dpd{max-width:920px;padding:6px var(--pad) 0}
+.dpt{white-space:pre-wrap;overflow-wrap:anywhere;font-size:16px;line-height:1.55;color:#d1d1d6;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;cursor:pointer}
+.dpd.open .dpt{display:block}
+.more-t{margin-top:8px;color:var(--accent);font-weight:600}
+.dpd h2{margin:28px 0 12px;font-size:20px;font-weight:700}
+.dpd .grp .rw em{max-width:60%;text-align:right}
+@media (max-width:700px){.dph{min-height:64svh}.dpb h1{font-size:28px}}
+/* サイドバー並べ替え */
+.grip{margin-left:auto;display:grid;place-items:center;padding:6px;color:var(--fg2);touch-action:none;cursor:grab}
+.grip .ic{width:1.1em;height:1.1em}
+.si.drag{z-index:5;background:rgba(255,255,255,.16);box-shadow:0 10px 28px rgba(0,0,0,.45);transition:none}
+/* 検索フィルタ */
+.flt{display:flex;flex-wrap:wrap;gap:8px;padding:12px var(--pad) 0}
+.flt select{appearance:none;-webkit-appearance:none;padding:8px 30px 8px 14px;border-radius:999px;border:0;font:600 14px/1 inherit;color:#fff;background:rgba(255,255,255,.1) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='m1 1 4 4 4-4' fill='none' stroke='%23aaa' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 12px center}
+/* チャプター */
+.chap{margin-top:16px}
+.chap h3{font-size:16px;font-weight:700;margin-bottom:8px}
+.chr2{display:flex;gap:10px;overflow-x:auto;scrollbar-width:none;padding-bottom:4px}
+.chr2::-webkit-scrollbar{display:none}
+.chr2 button{flex:none;display:flex;flex-direction:column;gap:2px;max-width:200px;padding:10px 14px;border-radius:16px;background:rgba(255,255,255,.09);text-align:left;transition:scale .3s var(--spring)}
+.chr2 button:active{scale:.94}
+.chr2 b{font-size:13px;color:var(--accent);font-variant-numeric:tabular-nums}
+.chr2 span{font-size:14px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}

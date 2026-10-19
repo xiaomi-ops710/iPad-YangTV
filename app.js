@@ -162,7 +162,7 @@ const Taste={
     (v.title||'').match(KW)?.forEach(k=>s+=(p.kw[k.toLowerCase()]||0)*.5);
     return s;
   },
-  rows(list){const p=this.get();return Store.get('pers',true)?list.slice().sort((a,b)=>(p.cat[b[1]]||0)-(p.cat[a[1]]||0)):list},
+  rows(list){const p=this.get();list=list.filter(r=>!Store.get('rowhide',[]).includes(r[1]));return Store.get('pers',true)?list.slice().sort((a,b)=>(p.cat[b[1]]||0)-(p.cat[a[1]]||0)):list},
   async recommend(){
     if(!Store.get('pers',true))return null;
     const p=this.profile();if(p.n<2)return null;
@@ -188,6 +188,7 @@ const continueList=()=>Store.get('hist',[]).filter(x=>x.d&&x.t>5&&x.t<x.d*.95);
 
 /* ---------- Views ---------- */
 const main=$('#main'),state={view:'home',cat:'all',stack:[]};let token=0,sub=0;
+const CATMAP={1:'映画・アニメ',2:'自動車',10:'ミュージック',15:'ペット',17:'スポーツ',19:'旅行',20:'ゲーム',22:'人物・ブログ',23:'コメディ',24:'エンタメ',25:'ニュース',26:'ハウツー',27:'教育',28:'サイエンス'};
 const TITLES={home:'ホーム',hot:'話題',live:'ライブ',subs:'登録',lib:'ライブラリ',search:'検索'};
 function setTitle(v,arg){$('#ptitle').textContent=(v==='lib'&&arg)||v==='channel'?'':(TITLES[v]||'');document.body.dataset.view=v}
 const CATS=[['all','すべて'],['live','ライブ'],['10','ミュージック'],['20','ゲーム'],['24','エンタメ'],['17','スポーツ'],['23','コメディ'],['25','ニュース'],['28','サイエンス']];
@@ -231,6 +232,34 @@ const VIEWS={
     const v=await API.feed(fol.slice(0,15));if(my!==token)return;
     slot.replaceWith(h('<div class="head sub"><h1>新着</h1></div>'),grid(v,{}));
   },
+  async detail(my,id){
+    let v=VID.get(id);
+    if(!v){[v]=await API.videos({id},true);if(!v)throw new Error('動画が見つかりません');reg(v)}
+    if(my!==token)return;
+    const wl=Lib.has(v.id),date=v.pub?new Date(v.pub).toLocaleDateString('ja-JP'):'',cat=CATMAP[v.cat]||'';
+    const root=h(`<div class="dp">
+      <header class="dph" style="--bg:url('${v.hi}')"><button class="back glass" data-act="back" aria-label="戻る">${icon('chev')}</button>
+        <div class="dpb">
+          ${v.cid?`<button class="dpch" data-ch="${v.cid}"><img id="dpav" alt=""><span>${esc(v.channel)}</span>${chv}</button>`:`<span class="dpch">${esc(v.channel)}</span>`}
+          <h1>${esc(v.title)}</h1>
+          <p class="dpm">${['動画',cat,date,fmt(v.dur)].filter(Boolean).map(esc).join(' · ')}${v.views?` · ${fmtN(v.views)}回視聴`:''}</p>
+          <div class="btns"><button class="btn-play" data-act="play" data-id="${v.id}">${icon('play')}再生</button>
+            <button class="btn-add glass" data-act="dpwl" data-id="${v.id}" aria-label="ウォッチリスト">${icon(wl?'check':'plus')}</button>
+            <button class="btn-add glass" data-act="queue" data-id="${v.id}" aria-label="キューに追加">${icon('queue')}</button>
+            <button class="btn-add glass" data-act="share" data-id="${v.id}" aria-label="共有">${icon('share')}</button></div>
+        </div></header>
+      <section class="dpd"><p class="dpt" data-act="dpdesc">${esc(v.desc||'説明はありません。')}</p><button class="more-t" data-act="dpdesc">もっと見る</button>
+        <h2>情報</h2>
+        <div class="grp">${[['チャンネル',v.channel],['公開日',date],['視聴回数',v.views?v.views.toLocaleString()+'回':''],['長さ',fmt(v.dur)],['カテゴリ',cat]].filter(r=>r[1]).map(([k,t])=>`<div class="rw"><span>${k}</span><em>${esc(t)}</em></div>`).join('')}</div>
+      </section>
+      <div class="rows" id="dprows"></div></div>`);
+    main.append(root);
+    if(v.cid)API.chInfo(v.cid).then(r=>{const c=r[0];if(c&&my===token){CH.set(c.id,c);$('#dpav',root).src=c.avatar}}).catch(()=>{});
+    API.videos({id:v.id},true).then(([f])=>{if(f&&my===token&&f.desc){v.desc=f.desc;$('.dpt',root).textContent=f.desc}}).catch(()=>{});
+    const rows=$('#dprows',root),s1=h('<div></div>'),s2=h('<div></div>');rows.append(s1,s2);
+    if(v.cid)API.uploads('UU'+v.cid.slice(2),14).then(l=>{l=l.filter(x=>x.id!==v.id);if(my===token&&l.length)s1.append(row(`${v.channel} の動画`,l))}).catch(()=>{});
+    API.trending(v.cat&&v.cat!=='0'?v.cat:null,30).then(l=>{l=arr(l.filter(x=>x.id!==v.id));if(my===token&&l.length)s2.append(row('関連する動画',l))}).catch(()=>{});
+  },
   async hot(my){const v=await API.trending(null,50);if(my!==token)return;main.append(head('話題の動画'),grid(arr(v),{}))},
   async lib(my,arg){
     const wl=Store.get('wl',[]),hist=Store.get('hist',[]),fol=Store.get('fol',[]),q=Store.get('queue',[]);
@@ -258,16 +287,19 @@ const VIEWS={
     const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
     const f=h(`<form class="sbar glass">${icon('search')}<input type="search" placeholder="動画・チャンネルを検索" enterkeyhint="search">${SR?`<button type="button" class="mic" aria-label="音声検索">${icon('mic')}</button>`:''}</form>`),
       res=h('<div></div>'),inp=$('input',f),rec=h('<div class="chips"></div>'),tiles=h('<div class="tiles"></div>');
+    const flt=h(`<div class="flt"><select data-f="order" aria-label="並べ替え"><option value="">関連度</option><option value="date">新しい順</option><option value="viewCount">再生回数順</option></select><select data-f="when" aria-label="期間"><option value="">いつでも</option><option value="1">24時間以内</option><option value="7">1週間以内</option><option value="30">1か月以内</option><option value="365">1年以内</option></select><select data-f="dur" aria-label="長さ"><option value="">長さ</option><option value="short">4分未満</option><option value="medium">4〜20分</option><option value="long">20分以上</option></select></div>`);
+    const fp=()=>{const g=k=>$(`[data-f=${k}]`,flt).value,o={};if(g('order'))o.order=g('order');if(g('dur'))o.videoDuration=g('dur');if(g('when'))o.publishedAfter=new Date(Date.now()-g('when')*864e5).toISOString();return o};
+    flt.addEventListener('change',()=>{if(mode==='v'&&inp.value.trim())run()});
     const drawRec=()=>{rec.innerHTML=Store.get('recent',[]).map(q=>`<button data-q="${esc(q)}">${esc(q)}</button>`).join('')};
     const run=async()=>{
       const q=inp.value.trim();if(!q)return;
       tiles.hidden=true;
-      Store.set('recent',[q,...Store.get('recent',[]).filter(x=>x!==q)].slice(0,8));drawRec();
+      if(!Store.get('priv',false))Store.set('recent',[q,...Store.get('recent',[]).filter(x=>x!==q)].slice(0,8));drawRec();
       res.replaceChildren(h('<p class="msg">検索中…</p>'));
       try{
         const m=q.match(/(?:youtu\.be\/|[?&]v=|shorts\/)([\w-]{11})/);
         if(m){const[v]=await API.videos({id:m[1]},true);res.replaceChildren();if(v){reg(v);Player.open(v)}return}
-        if(mode==='v')res.replaceChildren(grid(await API.search(q),{}));
+        if(mode==='v')res.replaceChildren(grid(await API.vsearch({q,...fp()}),{}));
         else{const cs=await API.channels(q),g=h('<div class="grid chg"></div>');cs.forEach(c=>CH.set(c.id,c));g.append(...cs.map(chCard));res.replaceChildren(g)}
       }catch(err){res.replaceChildren(h(`<p class="msg">${esc(err.message)}</p>`))}
     };
@@ -289,14 +321,14 @@ const VIEWS={
       });
       return el;
     }));
-    const tabs=seg([['v','動画'],['c','チャンネル']],'v',k=>{mode=k;if(inp.value.trim())run()},'smode');
+    const tabs=seg([['v','動画'],['c','チャンネル']],'v',k=>{mode=k;flt.hidden=k==='c';if(inp.value.trim())run()},'smode');
     f.addEventListener('submit',e=>{e.preventDefault();run()});
     inp.addEventListener('input',()=>{if(!inp.value){res.replaceChildren();tiles.hidden=false;rec.hidden=false}});
     rec.addEventListener('click',e=>{const b=e.target.closest('[data-q]');if(b){inp.value=b.dataset.q;run()}});
     const mic=$('.mic',f);
     if(mic)mic.addEventListener('click',()=>{const r=new SR();r.lang='ja-JP';r.interimResults=false;mic.classList.add('on');
       r.onresult=e=>{inp.value=e.results[0][0].transcript;run()};r.onend=()=>mic.classList.remove('on');try{r.start()}catch{}});
-    drawRec();main.append(f,tabs,rec,tiles,res);
+    drawRec();main.append(f,tabs,flt,rec,tiles,res);
     if(!phone())inp.focus();
   },
   async channel(my,id){
@@ -343,12 +375,7 @@ const goBack=()=>{const p=state.stack.pop();if(p)render(p[0],p[1],true)};
 const share=async v=>{const u='https://youtu.be/'+v.id;try{navigator.share?await navigator.share({title:v.title,url:u}):await navigator.clipboard.writeText(u)}catch{}};
 function sideCh(){renderSide()}
 function syncFollow(){$$('[data-act=follow]').forEach(b=>{const on=Fol.has(b.dataset.id);b.innerHTML=icon(on?'check':'plus')+(on?'フォロー中':'フォロー');b.classList.toggle('on',on)});sideCh()}
-function detail(v){
-  det.innerHTML=`<img class="dimg" src="${v.hi}" alt="" onerror="this.onerror=null;this.src='${v.thumb}'"><h2>${esc(v.title)}</h2>
-  <p class="by">${v.cid?`<button data-ch="${v.cid}">${esc(v.channel)}</button>`:esc(v.channel)} · ${fmt(v.dur)}</p><p class="ds">${esc(v.desc)}</p>
-  <div class="acts"><button class="btn-sub" data-act="share" data-id="${v.id}">共有</button><button class="btn-sub" data-act="queue" data-id="${v.id}">キュー</button>${addBtn(v)}<button class="btn-play" data-act="play" data-id="${v.id}">${icon('play')}再生</button></div>`;
-  det.showModal();
-}
+function detail(v){if(!v)return;reg(v);if(Player.v&&!Player.isMini)Player.mini();render('detail',v.id)}
 const syncAdd=()=>$$('[data-act=add]').forEach(b=>b.innerHTML=icon(Lib.has(b.dataset.id)?'check':'plus'));
 
 /* ---------- Player (IFrame API) ---------- */
@@ -386,9 +413,10 @@ const Player={
       <p class="wstat">${[v.views?fmtN(v.views)+'回視聴':'',date,fmt(v.dur)].filter(Boolean).join(' · ')}</p>
       <div class="wch"><img id="wav" alt=""><div class="nm"><b>${v.cid?`<button data-ch="${v.cid}">${esc(v.channel)}</button>`:esc(v.channel)}</b><span id="wsub"></span></div>
         ${v.cid?`<button class="btn-play" data-act="follow" data-id="${v.cid}" hidden></button>`:''}</div>
-      <div class="wact"></div><div class="wdesc" data-act="desc">${esc(v.desc||'説明はありません')}</div>
+      <div class="wact"></div><div class="chap" hidden></div><div class="wdesc" data-act="desc">${esc(v.desc||'説明はありません')}</div>
       <div class="wcm" hidden><h3>コメント</h3><div id="wcl"></div></div>`;
     this.acts();
+    API.videos({id:v.id},true).then(([f])=>{if(!f||this.v!==v)return;v.desc=f.desc;const d=$('.wdesc',this.el);if(d)d.textContent=f.desc||'説明はありません';this.chapters(f.desc)}).catch(()=>{});
     if(v.cid)API.chInfo(v.cid).then(r=>{const c=r[0];if(!c||this.v!==v)return;CH.set(c.id,c);
       $('#wav').src=c.avatar;$('#wsub').textContent=c.subs!=null?'登録者 '+fmtN(c.subs)+'人':'';$('.wch .btn-play').hidden=false;syncFollow()}).catch(()=>{});
   },
@@ -403,6 +431,13 @@ const Player={
       <button class="glass${this.loop?' on':''}" data-act="loop">${icon('repeat')}ループ</button>
       <button class="glass${this.auto?' on':''}" data-act="auto">自動再生</button>
       <button class="glass${this.sleep?' on':''}" data-act="sleep">${icon('moon')}${this.sleep?this.sleep+'分後に停止':'スリープタイマー'}</button>`;
+  },
+  chapters(desc){
+    const box=$('.chap',this.el);if(!box)return;
+    const L=(desc||'').split('\n').map(l=>l.match(/^\s*(?:(\d{1,2}):)?(\d{1,2}):(\d{2})\s+(.+)/)).filter(Boolean).map(m=>[(+m[1]||0)*3600+(+m[2])*60+(+m[3]),m[4].trim()]);
+    if(L.length<2){box.hidden=true;return}
+    const T=t=>{const H=t/3600|0,M=(t%3600)/60|0,S=t%60,p=n=>String(n).padStart(2,'0');return H?`${H}:${p(M)}:${p(S)}`:`${M}:${p(S)}`};
+    box.hidden=false;box.innerHTML='<h3>チャプター</h3><div class="chr2">'+L.map(([t,n])=>`<button data-seek="${t}"><b>${T(t)}</b><span>${esc(n)}</span></button>`).join('')+'</div>';
   },
   async recsFor(v){
     const box=$('.wrec',this.el);const q=Store.get('queue',[]);
@@ -445,7 +480,7 @@ const Player={
   nextSleep(){const S=[0,15,30,60];this.sleep=S[(S.indexOf(this.sleep)+1)%S.length];clearTimeout(this.sleepT);
     if(this.sleep)this.sleepT=setTimeout(()=>{this.p?.pauseVideo();this.sleep=0;this.acts()},this.sleep*60000);this.acts()},
   save(){
-    const p=this.p;if(!p?.getCurrentTime||!this.v)return;
+    const p=this.p;if(!p?.getCurrentTime||!this.v||Store.get('priv',false))return;
     const t=p.getCurrentTime(),d=p.getDuration();if(!(d>0)||t<3)return;
     const{id,title,channel,cid,cat,thumb,hi,dur}=this.v;
     Store.set('hist',[{id,title,channel,cid,cat,thumb,hi,dur,t,d,at:Date.now()},...Store.get('hist',[]).filter(x=>x.id!==id)].slice(0,30));
@@ -484,9 +519,11 @@ document.addEventListener('click',e=>{
   if(a.dataset.view)return render(a.dataset.view);
   if(a.dataset.lib)return render('lib',a.dataset.lib);
   if(a.dataset.ch){if(Player.v&&!Player.isMini)Player.mini();return render('channel',a.dataset.ch)}
-  if(a.matches('.card'))return Player.open(VID.get(a.dataset.id));
+  if(a.matches('.card')){const v=VID.get(a.dataset.id),direct=a.classList.contains('rl')||a.querySelector('.bar')||!Store.get('tapd',true);return direct?Player.open(v):detail(v)}
   const v=VID.get(a.dataset.id);
-  ({side:toggleSide,layout:layoutBtn,back:goBack,close:()=>Player.close(),play:()=>Player.open(v),info:()=>detail(v),menu:()=>{const r=a.getBoundingClientRect();Menu.open(v,r.left+r.width/2,r.bottom)},share:()=>share(v),
+  ({side:toggleSide,layout:layoutBtn,back:goBack,close:()=>Player.close(),play:()=>Player.open(v),info:()=>detail(v),menu:()=>{const r=a.getBoundingClientRect();Menu.open(v,r.left+r.width/2,r.bottom)},
+    dpwl:()=>{Lib.toggle(v);a.innerHTML=icon(Lib.has(v.id)?'check':'plus');toast(Lib.has(v.id)?'ウォッチリストに追加しました':'ウォッチリストから削除しました')},
+    dpdesc:()=>{const d=a.closest('.dpd');d.classList.toggle('open');$('.more-t',d).textContent=d.classList.contains('open')?'閉じる':'もっと見る'},share:()=>share(v),
     add:()=>{Lib.toggle(v);syncAdd();toast(Lib.has(v.id)?'ウォッチリストに追加しました':'ウォッチリストから削除しました')},
     follow:()=>{const c=CH.get(a.dataset.id);if(c){Fol.toggle(c);syncFollow()}},
     clear:()=>{Store.set('hist',[]);toast('視聴履歴を消去しました')},
@@ -605,7 +642,8 @@ const SWS={
 };
 SWS.bold={get:()=>Store.get('bold',false),set:v=>{Store.set('bold',v);applyPrefs()}};
 SWS.rm={get:()=>Store.get('rm',false),set:v=>{Store.set('rm',v);applyPrefs()}};
-for(const[k,d]of[['ja',true],['pers',true],['rks',true],['pv',true]])SWS[k]={get:()=>Store.get(k,d),set:v=>{Store.set(k,v);Settings.dirty=true}};
+ROWS.forEach(([n,k])=>{SWS['row'+k]={get:()=>!Store.get('rowhide',[]).includes(k),set:v=>{const x=Store.get('rowhide',[]).filter(i=>i!==k);Store.set('rowhide',v?x:[...x,k]);Settings.dirty=true}}});
+for(const[k,d]of[['ja',true],['pers',true],['rks',true],['pv',true],['tapd',true],['priv',false]])SWS[k]={get:()=>Store.get(k,d),set:v=>{Store.set(k,v);Settings.dirty=true}};
 const syncSw=()=>$$('[data-sw]').forEach(b=>b.setAttribute('aria-checked',SWS[b.dataset.sw].get()));
 document.addEventListener('click',e=>{const b=e.target.closest('[data-sw]');if(!b)return;const s=SWS[b.dataset.sw];s.set(!s.get());syncSw()});
 function initSl(el){
@@ -643,10 +681,11 @@ const SET={
       <button class="rw" data-go="liquid"><span>Liquid Glass</span><em>${TINTS[Math.round(Store.get('tint',.25)*4)]}</em>${chv}</button>
       <button class="rw" data-go="accent"><span>アクセントカラー</span><i class="dot" style="background:${Store.get('accent','#41a0ff')}"></i>${chv}</button>
       <button class="rw" data-go="nav"><span>ナビゲーション</span><em>${Store.get('layout','tab')==='side'?'サイドバー':'タブバー'}</em>${chv}</button>
+      <button class="rw" data-go="rows"><span>ホームの表示</span>${chv}</button>
     </div>
     <p class="ft">Liquid Glassは、背後の映像に合わせて見え方が変わります。</p>
     <p class="hd">再生</p>
-    <div class="grp"><div class="rw"><span>自動再生</span>${swt('auto')}</div><div class="rw"><span>ヒーローのプレビュー再生</span>${swt('pv')}</div><div class="rw"><span>コメントを表示</span>${swt('cm')}</div><button class="rw" data-go="keys"><span>キーボードショートカット</span>${chv}</button></div>
+    <div class="grp"><div class="rw"><span>自動再生</span>${swt('auto')}</div><div class="rw"><span>ヒーローのプレビュー再生</span>${swt('pv')}</div><div class="rw"><span>コメントを表示</span>${swt('cm')}</div><div class="rw"><span>タップで詳細ページを開く</span>${swt('tapd')}</div><div class="rw"><span>プライベート再生（履歴を残さない）</span>${swt('priv')}</div><button class="rw" data-go="keys"><span>キーボードショートカット</span>${chv}</button></div>
     <p class="ft">自動再生をオンにすると、動画の終了後にキュー、またはおすすめの動画へ進みます。</p>
     <p class="hd">おすすめ</p>
     <div class="grp"><div class="rw"><span>日本のコンテンツを優先</span>${swt('ja')}</div><div class="rw"><span>視聴履歴からおすすめ</span>${swt('pers')}</div><div class="rw"><span>検索を使ったおすすめ</span>${swt('rks')}</div></div>
@@ -695,6 +734,7 @@ const SET={
   keys:()=>({title:'キーボードショートカット',html:`
     <div class="grp">${[['/','検索を開く'],['1 – 5','ホーム・話題・登録・ライブラリ・検索'],['Space / K','再生 / 一時停止'],['← →','10秒戻る / 進む'],['F','全画面'],['M','ミニプレーヤーの切り替え'],['N','次の動画'],['Esc','ミニ化 / 戻る']].map(([k,t])=>`<div class="rw"><span>${t}</span><kbd>${k}</kbd></div>`).join('')}</div>
     <p class="ft">外付けキーボードを接続したiPadで使えます。入力欄にカーソルがあるときは無効です。</p>`}),
+  rows:()=>({title:'ホームの表示',html:`<div class="grp">${ROWS.map(([n,k])=>`<div class="rw"><span>${n}</span>${swt('row'+k)}</div>`).join('')}</div><p class="ft">オフにしたカテゴリは、ホームの「すべて」に表示されません。</p>`}),
   liquid:()=>({title:'Liquid Glass',html:`
     <div class="pvc"><div class="pvs"><b class="pv glass round">${icon('menu')}</b><b class="pv glass pill">${icon('search')}<u>検索</u></b></div>
       <div class="pvt"><h3>ようこそ</h3><h4>Liquid Glass のプレビュー</h4><p>ガラスの透明度や屈折の強さを変えると、上のボタンの見え方がすぐに変わります。</p></div></div>
@@ -758,13 +798,14 @@ const prof=()=>Store.get('prof',{name:'ゲスト',emoji:'🍳'});
 function applyProf(){$('#avatar').innerHTML=`<span class="pav">${esc(prof().emoji)}</span>`;renderSide()}
 const SIDE=[['search','検索','search'],['home','ホーム','home'],['hot','話題','flame'],['live','ライブ','live'],['subs','登録チャンネル','subs']];
 const Side={edit:false};
+const sideList=()=>{const o=Store.get('sideord',[]);return SIDE.slice().sort((a,b)=>{const x=o.indexOf(a[0]),y=o.indexOf(b[0]);return(x<0?99:x)-(y<0?99:y)})};
 function renderSide(){
   const hide=Store.get('sidehide',[]),fold=Store.get('sidefold',{}),fol=Store.get('fol',[]),p=prof();
   const cnt={wl:Store.get('wl',[]).length,hist:Store.get('hist',[]).length,queue:Store.get('queue',[]).length,fol:fol.length};
   const item=([v,t,ic])=>{const off=hide.includes(v);if(off&&!Side.edit)return'';
-    return `<button class="si${off?' off':''}" data-view="${v}" data-item="${v}">${Side.edit?`<i class="eck${off?'':' on'}">${off?'':icon('check')}</i>`:''}${icon(ic)}<span>${t}</span></button>`};
+    return `<button class="si${off?' off':''}" data-view="${v}" data-item="${v}">${Side.edit?`<i class="eck${off?'':' on'}">${off?'':icon('check')}</i>`:''}${icon(ic)}<span>${t}</span>${Side.edit?`<i class="grip" data-grip>${icon('grip')}</i>`:''}</button>`};
   const sec=(k,t,inner)=>inner?`<div class="ss"><button class="sh${fold[k]?' closed':''}" data-fold="${k}">${t}${chv}</button><div class="sg${fold[k]?' fold':''}"><div>${inner}</div></div></div>`:'';
-  $('#sideNav').innerHTML=SIDE.map(item).join('')
+  $('#sideNav').innerHTML=sideList().map(item).join('')
     +sec('ch','チャンネル',fol.slice(0,12).map(c=>`<button class="si" data-ch="${c.id}"><img class="av" src="${c.avatar}" alt=""><span>${esc(c.name)}</span></button>`).join(''))
     +sec('lib','ライブラリ',[['wl','ウォッチリスト','bookmark'],['hist','視聴履歴','clock'],['queue','キュー','queue'],['fol','フォロー中','people']].map(([k,t,ic])=>`<button class="si" data-lib="${k}">${icon(ic)}<span>${t}</span><em>${cnt[k]||''}</em></button>`).join(''));
   $('#sideEdit').textContent=Side.edit?'完了':'編集';
@@ -772,6 +813,8 @@ function renderSide(){
   $$('#side [data-view]').forEach(b=>b.dataset.view===state.view&&!state.arg&&b.setAttribute('aria-current','page'));
 }
 $('#side').addEventListener('click',e=>{
+  if(Side.dragged){e.stopPropagation();e.preventDefault();return}
+  if(e.target.closest('.grip')){e.stopPropagation();return}
   const f=e.target.closest('[data-fold]');
   if(f){const k=f.dataset.fold,o=Store.get('sidefold',{});o[k]=!o[k];Store.set('sidefold',o);f.nextElementSibling.classList.toggle('fold',o[k]);f.classList.toggle('closed',o[k]);return}
   if(e.target.closest('#sideEdit')){Side.edit=!Side.edit;renderSide();return}
@@ -779,13 +822,34 @@ $('#side').addEventListener('click',e=>{
   const it=e.target.closest('[data-item]');
   if(Side.edit&&it){e.stopPropagation();const hd=Store.get('sidehide',[]);Store.set('sidehide',hd.includes(it.dataset.item)?hd.filter(x=>x!==it.dataset.item):[...hd,it.dataset.item]);renderSide()}
 },true);
+/* ---------- サイドバー項目のドラッグ並べ替え（編集モード） ---------- */
+function sideDrag(e){
+  const grip=e.target.closest('.grip');if(!grip||!Side.edit)return;
+  const nav=$('#sideNav'),els=[...nav.querySelectorAll(':scope>.si[data-item]')],it=grip.closest('.si'),from=els.indexOf(it);
+  const rects=els.map(x=>x.getBoundingClientRect()),H=rects[from].height,y0=e.clientY;let to=from;
+  e.preventDefault();grip.setPointerCapture(e.pointerId);it.classList.add('drag');
+  els.forEach(x=>{if(x!==it)x.style.transition='transform .35s cubic-bezier(.3,1.4,.5,1)'});
+  const mv=ev=>{
+    const dy=ev.clientY-y0,c=rects[from].top+H/2+dy;it.style.transform=`translateY(${dy}px) scale(1.03)`;
+    const k=rects.findIndex(r=>c<r.bottom);to=k<0?els.length-1:k;
+    els.forEach((x,i)=>{if(x===it)return;x.style.transform=(from<to&&i>from&&i<=to)?`translateY(${-H}px)`:(from>to&&i<from&&i>=to)?`translateY(${H}px)`:''});
+  };
+  const up=()=>{
+    grip.removeEventListener('pointermove',mv);grip.removeEventListener('pointerup',up);grip.removeEventListener('pointercancel',up);
+    const ord=els.map(x=>x.dataset.item);ord.splice(to,0,ord.splice(from,1)[0]);Store.set('sideord',ord);
+    Side.dragged=true;setTimeout(()=>Side.dragged=false,120);renderSide();
+  };
+  grip.addEventListener('pointermove',mv);grip.addEventListener('pointerup',up);grip.addEventListener('pointercancel',up);
+}
+$('#side').addEventListener('pointerdown',sideDrag);
+document.addEventListener('click',e=>{const b=e.target.closest('[data-seek]');if(b&&Player.p)Player.p.seekTo(+b.dataset.seek,true)});
 /* ---------- コンテキストメニュー（Liquid Glassのポップオーバー）+ 「興味なし」 ---------- */
 const Menu={
   el:null,suppress:false,
   open(v,x,y){
     if(!v)return;this.close();const wl=Lib.has(v.id);
     const it=[['play','再生','play'],['wl',wl?'ウォッチリストから削除':'ウォッチリストに追加',wl?'check':'plus'],['queue','キューに追加','queue'],['share','共有','share'],'-',
-      ...(v.cid?[['ch','チャンネルを表示','people'],['nope','このチャンネルは興味なし','nope',1]]:[]),['info','詳細を表示','info']];
+      ...(v.cid?[['ch','チャンネルを表示','people'],['nope','このチャンネルは興味なし','nope',1]]:[]),...(Store.get('hist',[]).some(x=>x.id===v.id)?[['unhist','視聴履歴から削除','clock']]:[]),['info','詳細を表示','info']];
     const el=h(`<div class="cmenu glass" role="menu">${it.map(r=>r==='-'?'<hr>':`<button class="${r[3]?'red':''}" data-m="${r[0]}">${r[1]}${icon(r[2])}</button>`).join('')}</div>`);
     document.body.append(el);this.el=el;
     const w=el.offsetWidth,hh=el.offsetHeight,L=Math.min(Math.max(12,x-w/2),innerWidth-w-12),down=y+hh+20<innerHeight,T=down?y+10:Math.max(12,y-hh-10);
@@ -801,6 +865,7 @@ const Menu={
     if(k==='wl'){Lib.toggle(v);syncAdd();toast(Lib.has(v.id)?'ウォッチリストに追加しました':'ウォッチリストから削除しました')}
     if(k==='queue'){Store.set('queue',[...Store.get('queue',[]).filter(x=>x.id!==v.id),slim(v)]);toast('キューに追加しました');renderSide()}
     if(k==='share')share(v);
+    if(k==='unhist'){Store.set('hist',Store.get('hist',[]).filter(x=>x.id!==v.id));toast('視聴履歴から削除しました');renderSide();render(state.view,state.arg,true)}
     if(k==='info')detail(v);
     if(k==='ch'){if(Player.v&&!Player.isMini)Player.mini();render('channel',v.cid)}
     if(k==='nope'){const b=Store.get('blk',[]);if(!b.some(c=>c.id===v.cid))Store.set('blk',[...b,{id:v.cid,name:v.channel}]);
