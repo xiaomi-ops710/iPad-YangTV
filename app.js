@@ -53,11 +53,11 @@ const API={
     const ks=Object.keys(localStorage).filter(k=>k.startsWith('atv.pc.')),lim=force?8:40;
     if(ks.length>lim)ks.map(k=>{let t=0;try{t=JSON.parse(localStorage[k]).t}catch{}return[k,t]}).sort((a,b)=>a[1]-b[1]).slice(0,ks.length-Math.floor(lim*.7)).forEach(([k])=>localStorage.removeItem(k));
   },
-  async videos(p){return(await this.call('videos',{part:'snippet,contentDetails,statistics',regionCode:region(),...p})).items.map(norm)},
+  async videos(p,all){const L=(await this.call('videos',{part:'snippet,contentDetails,statistics',regionCode:region(),...p})).items.map(norm),b=new Set(Store.get('blk',[]).map(c=>c.id));return all||!b.size?L:L.filter(v=>!b.has(v.cid))},
   trending(cat,n=30){return this.videos({chart:'mostPopular',maxResults:n,...(cat?{videoCategoryId:cat}:{})})},
   async vsearch(p){
     const s=await this.call('search',{part:'snippet',type:'video',maxResults:24,regionCode:region(),relevanceLanguage:lang(),safeSearch:'moderate',...p});
-    return this.videos({id:s.items.map(i=>i.id.videoId).join(',')});
+    return this.videos({id:s.items.map(i=>i.id.videoId).join(',')},!!p.channelId);
   },
   search(q){return this.vsearch({q})},
   async chInfo(ids){return(await this.call('channels',{part:'snippet,statistics,contentDetails,brandingSettings',id:ids,maxResults:50})).items.map(nch)},
@@ -70,7 +70,7 @@ const API={
     const m=new Map((await this.videos({id:items.map(i=>i.id).join(','),maxResults:50})).map(v=>[v.id,v]));
     return items.map(i=>m.get(i.id)).filter(Boolean);
   },
-  async uploads(pl,n){const j=await this.call('playlistItems',{part:'contentDetails',playlistId:pl,maxResults:n});return this.videos({id:j.items.map(i=>i.contentDetails.videoId).join(',')})}
+  async uploads(pl,n){const j=await this.call('playlistItems',{part:'contentDetails',playlistId:pl,maxResults:n});return this.videos({id:j.items.map(i=>i.contentDetails.videoId).join(',')},true)}
 };
 
 /* ---------- Components ---------- */
@@ -86,16 +86,37 @@ function hero(list){
     <div class="btns"><button class="btn-play" data-act="play" data-id="${v.id}">${icon('play')}再生</button>${addBtn(v)}<button class="btn-add glass" data-act="info" data-id="${v.id}" aria-label="詳細">${icon('info')}</button></div></div></div>`)));
   const dots=h(`<div class="dots">${list.map((_,i)=>`<i data-dot="${i}"></i>`).join('')}</div>`);el.append(dots);
   let i=0;
-  const set=n=>{i=(n+list.length)%list.length;$$('.slide',el).forEach((s,k)=>s.classList.toggle('on',k===i));$$('i',dots).forEach((d,k)=>d.classList.toggle('on',k===i))};
-  set(0);clearInterval(heroTimer);heroTimer=setInterval(()=>set(i+1),7000);
+  const mute=h(`<button class="mutebtn glass" aria-label="ミュート切替" hidden>${icon('mute')}</button>`);el.append(mute);
+  let pv=null,pvT=0,muted=true,pvMsg=null;
+  const unpv=()=>{clearTimeout(pvT);if(pvMsg)removeEventListener('message',pvMsg);pvMsg=null;pv?.remove();pv=null;mute.hidden=true};
+  mute.addEventListener('click',()=>{muted=!muted;$('iframe',pv)?.contentWindow.postMessage(JSON.stringify({event:'command',func:muted?'mute':'unMute',args:[]}),'*');mute.innerHTML=icon(muted?'mute':'sound')});
+  const preview=()=>{   // ヒーローの無音プレビュー再生（Apple TVアプリ風）
+    unpv();if(!Store.get('pv',true)||document.hidden)return;
+    pvT=setTimeout(()=>{
+      const slide=$$('.slide',el)[i],v=list[i];if(!slide||!v||(Player.v&&!Player.isMini))return;
+      const r=el.getBoundingClientRect(),w=Math.max(r.width,r.height*16/9)*1.15,hh=w*9/16;
+      pv=h(`<div class="pvw"><iframe src="https://www.youtube.com/embed/${v.id}?autoplay=1&mute=1&controls=0&playsinline=1&loop=1&playlist=${v.id}&modestbranding=1&rel=0&iv_load_policy=3&disablekb=1&enablejsapi=1&origin=${encodeURIComponent(location.origin)}" allow="autoplay;encrypted-media" tabindex="-1" style="width:${w}px;height:${hh}px"></iframe></div>`);
+      const f=$('iframe',pv),mine=pv;   // 再生が始まったときだけ表示（埋め込み不可の動画のエラー画面を出さない）
+      pvMsg=e=>{if(e.source!==f.contentWindow)return;let d=e.data;try{d=typeof d==='string'?JSON.parse(d):d}catch{return}
+        if((d.event==='onStateChange'&&d.info===1)||(d.event==='infoDelivery'&&d.info?.playerState===1)){mine.classList.add('on');removeEventListener('message',pvMsg)}};
+      addEventListener('message',pvMsg);
+      f.addEventListener('load',()=>f.contentWindow.postMessage(JSON.stringify({event:'listening',id:1,channel:'widget'}),'*'));
+      setTimeout(()=>{if(pv===mine&&!mine.classList.contains('on'))unpv()},9000);
+      $('img',slide).after(pv);muted=true;mute.innerHTML=icon('mute');mute.hidden=false;
+    },1500);
+  };
+  const set=n=>{i=(n+list.length)%list.length;$$('.slide',el).forEach((s,k)=>s.classList.toggle('on',k===i));$$('i',dots).forEach((d,k)=>d.classList.toggle('on',k===i));preview()};
+  set(0);clearInterval(heroTimer);heroTimer=setInterval(()=>set(i+1),Store.get('pv',true)?11000:7000);
   dots.addEventListener('click',e=>{const d=e.target.closest('[data-dot]');if(d){set(+d.dataset.dot);clearInterval(heroTimer)}});
   let sx=null;el.addEventListener('pointerdown',e=>{sx=e.clientX});
   el.addEventListener('pointerup',e=>{if(sx==null)return;const d=e.clientX-sx;sx=null;if(Math.abs(d)>50){set(i+(d<0?1:-1));clearInterval(heroTimer)}});
+  const px=()=>{if(!el.isConnected)return removeEventListener('scroll',px);const y=Math.min(scrollY,700);el.style.setProperty('--py',y*.32+'px');el.style.setProperty('--ho',Math.max(0,1-y/520))};
+  addEventListener('scroll',px,{passive:true});
   return el;
 }
 function card(v,i,o={}){
   const p=o.progress&&v.d?Math.min(1,v.t/v.d):0;
-  return h(`<article class="card" tabindex="0" data-id="${v.id}" style="--i:${Math.min(i,10)}"><div class="thumb"><img loading="lazy" alt="" src="${v.thumb}" onload="this.classList.add('in')"><button class="more glass" data-act="info" data-id="${v.id}" aria-label="詳細">${icon('more')}</button>
+  return h(`<article class="card" tabindex="0" data-id="${v.id}" style="--i:${Math.min(i,10)}"><div class="thumb"><img loading="lazy" alt="" src="${v.thumb}" onload="this.classList.add('in')"><button class="more glass" data-act="menu" data-id="${v.id}" aria-label="メニュー">${icon('more')}</button>
     ${o.rank?`<span class="rank">${i+1}</span>`:''}
     ${p?`<span class="bar" style="--p:${p*100}%"><i></i></span>`:`<span class="dur">${fmt(v.dur)}</span>`}</div>
     <div class="meta"><b>${esc(v.title)}</b><span${v.cid?` data-ch="${v.cid}"`:''}>${esc(v.channel)}${p?` · 残り${Math.ceil((v.d-v.t)/60)}分`:''}</span></div></article>`);
@@ -245,7 +266,7 @@ const VIEWS={
       res.replaceChildren(h('<p class="msg">検索中…</p>'));
       try{
         const m=q.match(/(?:youtu\.be\/|[?&]v=|shorts\/)([\w-]{11})/);
-        if(m){const[v]=await API.videos({id:m[1]});res.replaceChildren();if(v){reg(v);Player.open(v)}return}
+        if(m){const[v]=await API.videos({id:m[1]},true);res.replaceChildren();if(v){reg(v);Player.open(v)}return}
         if(mode==='v')res.replaceChildren(grid(await API.search(q),{}));
         else{const cs=await API.channels(q),g=h('<div class="grid chg"></div>');cs.forEach(c=>CH.set(c.id,c));g.append(...cs.map(chCard));res.replaceChildren(g)}
       }catch(err){res.replaceChildren(h(`<p class="msg">${esc(err.message)}</p>`))}
@@ -313,11 +334,14 @@ const wide=()=>matchMedia('(min-width:900px)').matches,phone=()=>matchMedia('(ma
 function applyLayout(){document.body.dataset.layout=wide()&&Store.get('layout','tab')==='side'?'side':'tab';requestAnimationFrame(()=>markNav(state.view))}
 const closeSide=()=>{$('#side').classList.remove('open');$('#scrim').classList.remove('on')};
 const toggleSide=()=>{$('#side').classList.toggle('open');$('#scrim').classList.toggle('on')};
-function layoutBtn(){if(!wide())return toggleSide();Store.set('layout',document.body.dataset.layout==='side'?'tab':'side');applyLayout()}
+function layoutBtn(){
+  if(!wide())return toggleSide();
+  const to=document.body.dataset.layout==='side'?'tab':'side';Store.set('layout',to);applyLayout();
+  (to==='side'?$('#side'):$('#nav')).animate([to==='side'?{opacity:0,scale:.92,translate:'-30px 0'}:{opacity:0,scale:.85}],{duration:560,easing:'cubic-bezier(.3,1.3,.5,1)'});   // タブバー⇄サイドバーのモーフ風アニメーション
+}
 const goBack=()=>{const p=state.stack.pop();if(p)render(p[0],p[1],true)};
 const share=async v=>{const u='https://youtu.be/'+v.id;try{navigator.share?await navigator.share({title:v.title,url:u}):await navigator.clipboard.writeText(u)}catch{}};
-function sideCh(){const l=Store.get('fol',[]).slice(0,8);
-  $('#sideCh').innerHTML=l.length?'<p class="lbl">フォロー中</p>'+l.map(c=>`<button data-ch="${c.id}"><img class="av" src="${c.avatar}" alt="">${esc(c.name)}</button>`).join(''):''}
+function sideCh(){renderSide()}
 function syncFollow(){$$('[data-act=follow]').forEach(b=>{const on=Fol.has(b.dataset.id);b.innerHTML=icon(on?'check':'plus')+(on?'フォロー中':'フォロー');b.classList.toggle('on',on)});sideCh()}
 function detail(v){
   det.innerHTML=`<img class="dimg" src="${v.hi}" alt="" onerror="this.onerror=null;this.src='${v.thumb}'"><h2>${esc(v.title)}</h2>
@@ -334,7 +358,7 @@ const Player={
     const s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';document.head.append(s)})},
   get isMini(){return this.el.classList.contains('mini')},
   async open(v){
-    this.save();this.v=v;this.recs=[];this.el.style.cssText='';this.el.classList.remove('mini');this.el.classList.add('on');
+    this.save();$$('.pvw').forEach(e=>e.remove());this.v=v;this.recs=[];this.el.style.cssText='';this.el.classList.remove('mini');this.el.classList.add('on');
     document.body.classList.add('lock');$('.wp',this.el).scrollTop=0;
     this.info(v);this.session(v);
     const t=Math.floor(Store.get('hist',[]).find(x=>x.id===v.id)?.t||0),st=t>10?t-3:0;
@@ -462,7 +486,7 @@ document.addEventListener('click',e=>{
   if(a.dataset.ch){if(Player.v&&!Player.isMini)Player.mini();return render('channel',a.dataset.ch)}
   if(a.matches('.card'))return Player.open(VID.get(a.dataset.id));
   const v=VID.get(a.dataset.id);
-  ({side:toggleSide,layout:layoutBtn,back:goBack,close:()=>Player.close(),play:()=>Player.open(v),info:()=>detail(v),share:()=>share(v),
+  ({side:toggleSide,layout:layoutBtn,back:goBack,close:()=>Player.close(),play:()=>Player.open(v),info:()=>detail(v),menu:()=>{const r=a.getBoundingClientRect();Menu.open(v,r.left+r.width/2,r.bottom)},share:()=>share(v),
     add:()=>{Lib.toggle(v);syncAdd();toast(Lib.has(v.id)?'ウォッチリストに追加しました':'ウォッチリストから削除しました')},
     follow:()=>{const c=CH.get(a.dataset.id);if(c){Fol.toggle(c);syncFollow()}},
     clear:()=>{Store.set('hist',[]);toast('視聴履歴を消去しました')},
@@ -473,6 +497,7 @@ document.addEventListener('click',e=>{
     setup:()=>{closeSide();Settings.open(a.dataset.page)}})[a.dataset.act]?.();
 });
 document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&Menu.el)return Menu.close();
   if(e.key==='Escape'&&Settings.on)return Settings.pop();
   if(e.key==='Escape'&&Player.v&&!Player.isMini)Player.mini();
   if(e.key==='Enter'&&e.target.matches('.card'))Player.open(VID.get(e.target.dataset.id));
@@ -539,14 +564,14 @@ const LG={
     const dm=(s,res)=>this.el('feDisplacementMap',{in:'SourceGraphic',in2:'m',scale:s,xChannelSelector:'R',yChannelSelector:'G',...(res?{result:res}:{})});
     if(!disp)f.append(dm(scale));
     else{
-      const mat=i=>{const a=Array(20).fill(0);a[i*6]=1;a[18]=1;return a.join(' ')},k=[.94,1,1.07];
+      const mat=i=>{const a=Array(20).fill(0);a[i*6]=1;a[18]=1;return a.join(' ')},k=[.96,1,1.05];
       'RGB'.split('').forEach((c,i)=>f.append(dm(scale*k[i],'d'+c),this.el('feColorMatrix',{in:'d'+c,type:'matrix',values:mat(i),result:'c'+c})));
-      f.append(this.el('feBlend',{in:'cR',in2:'cG',mode:'screen',result:'rg'}),this.el('feBlend',{in:'rg',in2:'cB',mode:'screen'}));
+      f.append(this.el('feBlend',{in:'cR',in2:'cG',mode:'screen',result:'rg'}),this.el('feBlend',{in:'rg',in2:'cB',mode:'screen',result:'bl'}),this.el('feGaussianBlur',{in:'bl',stdDeviation:.45}));
     }
     this.defs.append(f);return f;
   },
   lens(w,h){
-    const m=this.maps(w,h,h/2,h*.42,h*.9,2.6),id='lgl'+(++this.n),k=m.max*2*.85*this.strength;
+    const m=this.maps(w,h,h/2,h*.28,h*.3,2.6),id='lgl'+(++this.n),k=m.max*2*this.strength;   // 縁だけをわずかに曲げる（最大約9px）
     this.filter(id,w,h,m.map,k,true);                                     // レンズ内の文字: 分光つき屈折
     let bid='';if(this.chromium){bid='lgb'+(++this.n);this.filter(bid,w,h,m.map,k,false)}   // 背景そのものの屈折(Chromium)
     return{id,bid,spec:m.spec};
@@ -568,7 +593,7 @@ const LG={
   },
   scan(){
     if(!this.defs)return;
-    $$('.nav,.seg,.side,.sbar,.btn-add,.x,.knob,.pv,.sl-wide,.back,#avatar').forEach(e=>this.attach(e));
+    $$('.nav,.seg,.side,.sbar,.btn-add,.x,.knob,.pv,.sl-wide,.back,#avatar,.cmenu,.mutebtn').forEach(e=>this.attach(e));
     this.panels=this.panels.filter(p=>{if(p.el.isConnected)return true;p.ro.disconnect();this.drop(p.id);return false});
   }
 };
@@ -580,7 +605,7 @@ const SWS={
 };
 SWS.bold={get:()=>Store.get('bold',false),set:v=>{Store.set('bold',v);applyPrefs()}};
 SWS.rm={get:()=>Store.get('rm',false),set:v=>{Store.set('rm',v);applyPrefs()}};
-for(const[k,d]of[['ja',true],['pers',true],['rks',true]])SWS[k]={get:()=>Store.get(k,d),set:v=>{Store.set(k,v);Settings.dirty=true}};
+for(const[k,d]of[['ja',true],['pers',true],['rks',true],['pv',true]])SWS[k]={get:()=>Store.get(k,d),set:v=>{Store.set(k,v);Settings.dirty=true}};
 const syncSw=()=>$$('[data-sw]').forEach(b=>b.setAttribute('aria-checked',SWS[b.dataset.sw].get()));
 document.addEventListener('click',e=>{const b=e.target.closest('[data-sw]');if(!b)return;const s=SWS[b.dataset.sw];s.set(!s.get());syncSw()});
 function initSl(el){
@@ -607,6 +632,8 @@ function applyPrefs(){
 }
 const SET={
   root:()=>({title:'設定',html:`
+    <div class="grp"><button class="rw prof" data-go="profile"><span class="pav big">${esc(prof().emoji)}</span><span class="pn"><b>${esc(prof().name)}</b><small>プロフィールを編集</small></span>${chv}</button></div>
+    <p class="ft"></p>
     <div class="grp">
       <button class="rw" data-go="key"><span>APIキー</span><em>${Store.get('key','')?'設定済み':'未設定'}</em>${chv}</button>
       <button class="rw" data-go="region"><span>地域</span><em>${REGIONS.find(r=>r[0]===region())[1]}</em>${chv}</button>
@@ -619,7 +646,7 @@ const SET={
     </div>
     <p class="ft">Liquid Glassは、背後の映像に合わせて見え方が変わります。</p>
     <p class="hd">再生</p>
-    <div class="grp"><div class="rw"><span>自動再生</span>${swt('auto')}</div><div class="rw"><span>コメントを表示</span>${swt('cm')}</div></div>
+    <div class="grp"><div class="rw"><span>自動再生</span>${swt('auto')}</div><div class="rw"><span>ヒーローのプレビュー再生</span>${swt('pv')}</div><div class="rw"><span>コメントを表示</span>${swt('cm')}</div><button class="rw" data-go="keys"><span>キーボードショートカット</span>${chv}</button></div>
     <p class="ft">自動再生をオンにすると、動画の終了後にキュー、またはおすすめの動画へ進みます。</p>
     <p class="hd">おすすめ</p>
     <div class="grp"><div class="rw"><span>日本のコンテンツを優先</span>${swt('ja')}</div><div class="rw"><span>視聴履歴からおすすめ</span>${swt('pers')}</div><div class="rw"><span>検索を使ったおすすめ</span>${swt('rks')}</div></div>
@@ -628,6 +655,8 @@ const SET={
     <div class="grp"><div class="rw"><span>文字を太くする</span>${swt('bold')}</div><div class="rw"><span>視差効果を減らす</span>${swt('rm')}</div></div>
     <p class="ft">視差効果を減らすと、画面の動きやアニメーションが最小限になります。</p>
     <p class="hd">データ</p>
+    <div class="grp"><button class="rw" data-go="blocked"><span>表示しないチャンネル</span><em>${Store.get('blk',[]).length||''}</em>${chv}</button></div>
+    <p class="ft"></p>
     <div class="grp">
       <button class="rw red" data-do="hist"><span>視聴履歴を消去</span></button>
       <button class="rw red" data-do="recent"><span>検索履歴を消去</span></button>
@@ -648,6 +677,24 @@ const SET={
       <div class="grp pkr">${card('tab','タブバー','<b class="m-nav"></b><b class="m-hero"></b><b class="m-row"></b>')}${card('side','サイドバー','<b class="m-side"></b><b class="m-hero"></b><b class="m-row"></b>')}</div>
       <p class="ft">サイドバーは、画面幅900px以上のiPadで使えます。幅が狭いときは、タブバーで表示されます。</p>`};
   },
+  profile:()=>{
+    const p=prof(),E=['🍳','🎧','🎮','🐱','🐶','🚃','🌸','⚽','🎬','🚀','☕','🌙'];
+    return{title:'プロフィール',html:`
+      <div class="pcard"><span class="pav big">${esc(p.emoji)}</span></div>
+      <div class="grp"><label class="rw fld"><span>名前</span><input id="pn" value="${esc(p.name)}" maxlength="20"></label></div>
+      <p class="hd">アイコン</p>
+      <div class="grp egrid">${E.map(e=>`<button class="eb${e===p.emoji?' on':''}" data-opt="emoji:${e}">${e}</button>`).join('')}</div>
+      <p class="ft">名前とアイコンは、この端末のサイドバーなどに表示されます。</p>`};
+  },
+  blocked:()=>{
+    const b=Store.get('blk',[]);
+    return{title:'表示しないチャンネル',html:b.length
+      ?`<div class="grp">${b.map(c=>`<div class="rw"><span>${esc(c.name)}</span><button class="lnkb" data-opt="unblock:${c.id}">解除</button></div>`).join('')}</div><p class="ft">「興味なし」にしたチャンネルの動画は、おすすめや一覧に表示されません。</p>`
+      :'<p class="ft">表示しないチャンネルはありません。動画の「…」メニューから「このチャンネルは興味なし」を選ぶと、ここに追加されます。</p>'};
+  },
+  keys:()=>({title:'キーボードショートカット',html:`
+    <div class="grp">${[['/','検索を開く'],['1 – 5','ホーム・話題・登録・ライブラリ・検索'],['Space / K','再生 / 一時停止'],['← →','10秒戻る / 進む'],['F','全画面'],['M','ミニプレーヤーの切り替え'],['N','次の動画'],['Esc','ミニ化 / 戻る']].map(([k,t])=>`<div class="rw"><span>${t}</span><kbd>${k}</kbd></div>`).join('')}</div>
+    <p class="ft">外付けキーボードを接続したiPadで使えます。入力欄にカーソルがあるときは無効です。</p>`}),
   liquid:()=>({title:'Liquid Glass',html:`
     <div class="pvc"><div class="pvs"><b class="pv glass round">${icon('menu')}</b><b class="pv glass pill">${icon('search')}<u>検索</u></b></div>
       <div class="pvt"><h3>ようこそ</h3><h4>Liquid Glass のプレビュー</h4><p>ガラスの透明度や屈折の強さを変えると、上のボタンの見え方がすぐに変わります。</p></div></div>
@@ -695,6 +742,8 @@ Settings.el.addEventListener('click',e=>{
     if(k==='region'){Store.set('region',v);Settings.dirty=true}
     if(k==='accent'){Store.set('accent',v);applyPrefs()}
     if(k==='layout'){Store.set('layout',v);applyLayout()}
+    if(k==='emoji'){Store.set('prof',{...prof(),emoji:v});applyProf()}
+    if(k==='unblock'){Store.set('blk',Store.get('blk',[]).filter(c=>c.id!==v));API.cache.clear();Settings.dirty=true}
     return Settings.refresh();
   }
   if(d){
@@ -702,7 +751,94 @@ Settings.el.addEventListener('click',e=>{
     toast({hist:'視聴履歴を消去しました',recent:'検索履歴を消去しました',queue:'キューを空にしました'}[k]);
   }
 });
-Settings.el.addEventListener('input',e=>{if(e.target.id==='sk'){Store.set('key',e.target.value.trim());API.cache.clear();Settings.dirty=true}});
+Settings.el.addEventListener('input',e=>{if(e.target.id==='pn'){Store.set('prof',{...prof(),name:e.target.value||'ゲスト'});applyProf()}
+  if(e.target.id==='sk'){Store.set('key',e.target.value.trim());API.cache.clear();Settings.dirty=true}});
+/* ---------- プロフィール / サイドバー（iPadOS 26風：編集・折りたたみ・プロフィール） ---------- */
+const prof=()=>Store.get('prof',{name:'ゲスト',emoji:'🍳'});
+function applyProf(){$('#avatar').innerHTML=`<span class="pav">${esc(prof().emoji)}</span>`;renderSide()}
+const SIDE=[['search','検索','search'],['home','ホーム','home'],['hot','話題','flame'],['live','ライブ','live'],['subs','登録チャンネル','subs']];
+const Side={edit:false};
+function renderSide(){
+  const hide=Store.get('sidehide',[]),fold=Store.get('sidefold',{}),fol=Store.get('fol',[]),p=prof();
+  const cnt={wl:Store.get('wl',[]).length,hist:Store.get('hist',[]).length,queue:Store.get('queue',[]).length,fol:fol.length};
+  const item=([v,t,ic])=>{const off=hide.includes(v);if(off&&!Side.edit)return'';
+    return `<button class="si${off?' off':''}" data-view="${v}" data-item="${v}">${Side.edit?`<i class="eck${off?'':' on'}">${off?'':icon('check')}</i>`:''}${icon(ic)}<span>${t}</span></button>`};
+  const sec=(k,t,inner)=>inner?`<div class="ss"><button class="sh${fold[k]?' closed':''}" data-fold="${k}">${t}${chv}</button><div class="sg${fold[k]?' fold':''}"><div>${inner}</div></div></div>`:'';
+  $('#sideNav').innerHTML=SIDE.map(item).join('')
+    +sec('ch','チャンネル',fol.slice(0,12).map(c=>`<button class="si" data-ch="${c.id}"><img class="av" src="${c.avatar}" alt=""><span>${esc(c.name)}</span></button>`).join(''))
+    +sec('lib','ライブラリ',[['wl','ウォッチリスト','bookmark'],['hist','視聴履歴','clock'],['queue','キュー','queue'],['fol','フォロー中','people']].map(([k,t,ic])=>`<button class="si" data-lib="${k}">${icon(ic)}<span>${t}</span><em>${cnt[k]||''}</em></button>`).join(''));
+  $('#sideEdit').textContent=Side.edit?'完了':'編集';
+  $('#sideProf').innerHTML=`<span class="pav">${esc(p.emoji)}</span><span>${esc(p.name)}</span>`;
+  $$('#side [data-view]').forEach(b=>b.dataset.view===state.view&&!state.arg&&b.setAttribute('aria-current','page'));
+}
+$('#side').addEventListener('click',e=>{
+  const f=e.target.closest('[data-fold]');
+  if(f){const k=f.dataset.fold,o=Store.get('sidefold',{});o[k]=!o[k];Store.set('sidefold',o);f.nextElementSibling.classList.toggle('fold',o[k]);f.classList.toggle('closed',o[k]);return}
+  if(e.target.closest('#sideEdit')){Side.edit=!Side.edit;renderSide();return}
+  if(e.target.closest('#sideProf')){closeSide();Settings.open('profile');return}
+  const it=e.target.closest('[data-item]');
+  if(Side.edit&&it){e.stopPropagation();const hd=Store.get('sidehide',[]);Store.set('sidehide',hd.includes(it.dataset.item)?hd.filter(x=>x!==it.dataset.item):[...hd,it.dataset.item]);renderSide()}
+},true);
+/* ---------- コンテキストメニュー（Liquid Glassのポップオーバー）+ 「興味なし」 ---------- */
+const Menu={
+  el:null,suppress:false,
+  open(v,x,y){
+    if(!v)return;this.close();const wl=Lib.has(v.id);
+    const it=[['play','再生','play'],['wl',wl?'ウォッチリストから削除':'ウォッチリストに追加',wl?'check':'plus'],['queue','キューに追加','queue'],['share','共有','share'],'-',
+      ...(v.cid?[['ch','チャンネルを表示','people'],['nope','このチャンネルは興味なし','nope',1]]:[]),['info','詳細を表示','info']];
+    const el=h(`<div class="cmenu glass" role="menu">${it.map(r=>r==='-'?'<hr>':`<button class="${r[3]?'red':''}" data-m="${r[0]}">${r[1]}${icon(r[2])}</button>`).join('')}</div>`);
+    document.body.append(el);this.el=el;
+    const w=el.offsetWidth,hh=el.offsetHeight,L=Math.min(Math.max(12,x-w/2),innerWidth-w-12),down=y+hh+20<innerHeight,T=down?y+10:Math.max(12,y-hh-10);
+    el.style.left=L+'px';el.style.top=T+'px';el.style.transformOrigin=`${x-L}px ${down?0:hh}px`;
+    el.animate([{opacity:0,scale:.55},{opacity:1,scale:1}],{duration:440,easing:'cubic-bezier(.3,1.4,.5,1)'});
+    el.addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(b){this.close();this.run(b.dataset.m,v)}});
+    setTimeout(()=>{this.off=e=>{if(this.el&&!el.contains(e.target))this.close()};document.addEventListener('pointerdown',this.off,true)},0);
+    LG.scan();
+  },
+  close(){if(!this.el)return;const e=this.el;this.el=null;document.removeEventListener('pointerdown',this.off,true);e.animate([{opacity:1},{opacity:0,scale:.9}],{duration:160}).onfinish=()=>e.remove()},
+  run(k,v){
+    if(k==='play')Player.open(v);
+    if(k==='wl'){Lib.toggle(v);syncAdd();toast(Lib.has(v.id)?'ウォッチリストに追加しました':'ウォッチリストから削除しました')}
+    if(k==='queue'){Store.set('queue',[...Store.get('queue',[]).filter(x=>x.id!==v.id),slim(v)]);toast('キューに追加しました');renderSide()}
+    if(k==='share')share(v);
+    if(k==='info')detail(v);
+    if(k==='ch'){if(Player.v&&!Player.isMini)Player.mini();render('channel',v.cid)}
+    if(k==='nope'){const b=Store.get('blk',[]);if(!b.some(c=>c.id===v.cid))Store.set('blk',[...b,{id:v.cid,name:v.channel}]);
+      API.cache.clear();toast(`「${v.channel}」の動画を表示しません`);render(state.view,state.arg,true)}
+  }
+};
+document.addEventListener('contextmenu',e=>{const c=e.target.closest?.('.card');if(!c||e.target.closest('.more'))return;e.preventDefault();Menu.open(VID.get(c.dataset.id),e.clientX,e.clientY)});
+document.addEventListener('click',e=>{if(Menu.suppress){e.stopPropagation();e.preventDefault()}},true);
+(()=>{let lp=null;   // タッチの長押しでメニュー
+  document.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='mouse')return;const c=e.target.closest?.('.card');if(!c||e.target.closest('.more'))return;
+    const s={x:e.clientX,y:e.clientY};s.t=setTimeout(()=>{s.done=true;Menu.suppress=true;navigator.vibrate?.(8);Menu.open(VID.get(c.dataset.id),s.x,s.y)},480);lp=s});
+  document.addEventListener('pointermove',e=>{if(lp&&!lp.done&&Math.hypot(e.clientX-lp.x,e.clientY-lp.y)>8){clearTimeout(lp.t);lp=null}});
+  ['pointerup','pointercancel'].forEach(t=>document.addEventListener(t,()=>{if(!lp)return;clearTimeout(lp.t);if(lp.done)setTimeout(()=>Menu.suppress=false,450);lp=null}));
+})();
+/* ---------- キーボードショートカット（外付けキーボード） ---------- */
+document.addEventListener('keydown',e=>{
+  if(e.target.matches?.('input,textarea,select')||e.metaKey||e.ctrlKey||e.altKey)return;
+  const P=Player,go=v=>{if(P.v&&!P.isMini)P.mini();render(v)};
+  if(e.key==='/'){e.preventDefault();go('search')}
+  else if('12345'.includes(e.key)&&e.key)go(['home','hot','subs','lib','search'][+e.key-1]);
+  else if(!P.v)return;
+  else if(e.key===' '||e.key==='k'){e.preventDefault();P.toggle()}
+  else if(e.key==='ArrowRight'&&P.p)P.p.seekTo(P.p.getCurrentTime()+10,true);
+  else if(e.key==='ArrowLeft'&&P.p)P.p.seekTo(Math.max(0,P.p.getCurrentTime()-10),true);
+  else if(e.key==='f'&&!P.isMini)P.full();
+  else if(e.key==='m')P.isMini?P.expand():P.mini();
+  else if(e.key==='n'){const n=P.nextUp();if(n)P.open(n)}
+});
+/* ---------- タブバーのミニマイズ（スマホ：下へスクロールで縮む） ---------- */
+(()=>{let ly=0;const nav=$('#nav');
+  addEventListener('scroll',()=>{
+    if(!phone())return;const y=scrollY,d=y-ly;if(Math.abs(d)<8)return;ly=y;
+    const min=d>0&&y>90;if(nav.classList.contains('min')===min)return;
+    nav.classList.toggle('min',min);if(!min)setTimeout(()=>mark(nav,true),540);
+  },{passive:true});
+  nav.addEventListener('click',e=>{if(!nav.classList.contains('min'))return;e.stopPropagation();e.preventDefault();nav.classList.remove('min');setTimeout(()=>mark(nav,true),540)},true);
+})();
 /* ---------- Liquid Glass レンズ: 選択中タブを長押し→ドラッグで移動 ---------- */
 const Lens=(()=>{
   let S=null,raf=0,block=false;
@@ -712,7 +848,7 @@ const Lens=(()=>{
     const lx=(S.x-S.base/2)+'px';l.setProperty('--lx',lx);S.bar.style.setProperty('--lx',lx);l.setProperty('--sx',1+st);l.setProperty('--sy',1-st*.6)};
   function activate(){
     const{bar,btn}=S,r=bar.getBoundingClientRect(),tabs=tabsOf(bar);
-    Object.assign(S,{on:true,tabs,min:cx(tabs[0]),max:cx(tabs[tabs.length-1]),base:Math.max(btn.offsetWidth+30,88),x:cx(btn),v:0});
+    Object.assign(S,{on:true,tabs,min:cx(tabs[0]),max:cx(tabs[tabs.length-1]),base:Math.max(btn.offsetWidth+12,72),x:cx(btn),v:0});
     S.target=S.x;S.off=S.x-(S.sx-r.left+bar.scrollLeft);
     const html=[...bar.children].filter(c=>c.tagName==='BUTTON').map(b=>b.outerHTML).join('');
     const bleed=parseFloat(getComputedStyle(bar).getPropertyValue('--bleed'))||0,
@@ -746,7 +882,7 @@ const Lens=(()=>{
   }
   document.addEventListener('pointerdown',e=>{
     const b=e.target.closest?.('.nav button[aria-current],.seg button[aria-current]');
-    if(!b||S||!e.isPrimary)return;
+    if(!b||S||!e.isPrimary||b.closest('.nav.min'))return;
     S={bar:b.closest('.nav,.seg'),btn:b,id:e.pointerId,sx:e.clientX,sy:e.clientY,on:false,timer:setTimeout(activate,260)};
   });
   document.addEventListener('pointermove',e=>{
@@ -770,5 +906,5 @@ const Lens=(()=>{
 matchMedia('(min-width:900px)').addEventListener('change',applyLayout);
 matchMedia('(max-width:700px)').addEventListener('change',()=>{applyLayout();render(state.view,state.arg,true)});
 document.documentElement.style.setProperty('--accent',Store.get('accent','#41a0ff'));
-applyPrefs();LG.start();applyLayout();sideCh();render('home');
+applyPrefs();LG.start();applyLayout();applyProf();render('home');
 if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
